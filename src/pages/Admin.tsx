@@ -60,7 +60,7 @@ const Admin = () => {
 
   const [users, setUsers] = useState<UserStore[]>([]);
   const [topups, setTopups] = useState<Topup[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"topups" | "users">("topups");
 
   // Approve with editable amount

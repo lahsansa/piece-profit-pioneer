@@ -17,6 +17,8 @@ const BottomNav = () => {
   const { lang } = useLang();
   const isAr = lang === "ar";
 
+  if (location.pathname === "/admin") return null;
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-border shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
       <div className="max-w-md mx-auto grid grid-cols-7 py-2">

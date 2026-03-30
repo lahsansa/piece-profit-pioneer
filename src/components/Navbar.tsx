@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { COMPANY_NAME } from "@/lib/fake-data";
 import { useLang } from "@/hooks/use-lang";
@@ -6,6 +6,9 @@ import { TrendingUp, Globe } from "lucide-react";
 
 const Navbar = () => {
   const { lang, setLang } = useLang();
+  const location = useLocation();
+
+  if (location.pathname === "/admin") return null;
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">

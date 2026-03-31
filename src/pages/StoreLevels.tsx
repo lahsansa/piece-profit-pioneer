@@ -216,14 +216,18 @@ const StoreLevels = () => {
                     <ArrowUp className="w-5 h-5" />
                     ترقية — ادفع ${diff} فقط
                   </button>
-                ) : (
+                ) : currentPack && plan.price < currentPrice ? (
+                  <div className="w-full py-3.5 rounded-xl bg-gray-100 text-gray-400 font-bold text-base text-center cursor-not-allowed">
+                    🔒 لا يمكن التخفيض
+                  </div>
+                ) : !currentPack ? (
                   <button
                     onClick={() => navigate(`/topup?amount=${plan.price}&plan=${encodeURIComponent(plan.nameAr)}`)}
                     className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg shadow-emerald-200"
                   >
                     قم بالتفعيل الآن — ${plan.price} USDT 🚀
                   </button>
-                )}
+                ) : null}
               </div>
             </motion.div>
           );

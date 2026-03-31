@@ -141,7 +141,7 @@ const Dashboard = () => {
       // Save to database every minute
       const now = new Date();
       const secondsSinceLastSave = (now.getTime() - lastSaveRef.current.getTime()) / 1000;
-      if (secondsSinceLastSave >= 1 && userIdRef.current) {
+      if (secondsSinceLastSave >= 2 && userIdRef.current) {
         lastSaveRef.current = now;
         supabase.from("user_stores").update({
           total_profit: liveProfitRef.current,

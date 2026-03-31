@@ -116,8 +116,8 @@ const Dashboard = () => {
   const quickActions = [
     { label: isAr ? "شحن" : "Recharge", icon: Wallet, color: "text-primary", bg: "bg-primary/10", to: "/topup" },
     { label: isAr ? "سحب" : "Withdrawal", icon: ArrowDownToLine, color: "text-profit", bg: "bg-profit/10", to: "/withdraw" },
-    { label: isAr ? "محفظتي" : "My Wallet", icon: CreditCard, color: "text-orange-500", bg: "bg-orange-500/10", to: "/withdraw" },
-    { label: isAr ? "حسابي" : "Account", icon: UserCog, color: "text-purple-500", bg: "bg-purple-500/10", to: "/withdraw" },
+    { label: isAr ? "محفظتي" : "My Wallet", icon: CreditCard, color: "text-orange-500", bg: "bg-orange-500/10", to: null },
+    { label: isAr ? "حسابي" : "Account", icon: UserCog, color: "text-purple-500", bg: "bg-purple-500/10", to: null },
   ];
 
   const storeStats = [

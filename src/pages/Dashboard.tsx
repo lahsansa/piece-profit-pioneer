@@ -6,7 +6,7 @@ import { useLang } from "@/hooks/use-lang";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Wallet, ArrowDownToLine, CreditCard, UserCog,
-  Globe, Landmark, Download, Search, User, Shield, LogOut, Copy, Check, Bell,
+  Globe, Landmark, Download, Search, User, Shield, LogOut, Copy, Check,
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -50,7 +50,6 @@ const Dashboard = () => {
   });
   const [liveProfit, setLiveProfit] = useState(0);
   const [liveBalance, setLiveBalance] = useState(0);
-  const [showRenewalDialog, setShowRenewalDialog] = useState(false);
 
   const storeDataRef = useRef(storeData);
   const liveProfitRef = useRef(0);
@@ -58,7 +57,6 @@ const Dashboard = () => {
   const userIdRef = useRef("");
   // This ref persists across re-renders and refreshes (loaded from DB)
   const renewalBlockedRef = useRef(false);
-  const renewalShownRef = useRef(false);
 
   useEffect(() => { storeDataRef.current = storeData; }, [storeData]);
 
@@ -142,9 +140,7 @@ const Dashboard = () => {
         // 4. Not already closed this session
         const closedThisSession = sessionStorage.getItem(`renewal_closed_${user.id}`) === "true";
         if (totalTopup > 0 && dbBalance < packPrice && !isRenewalBlocked && !closedThisSession) {
-          renewalShownRef.current = true;
-          setShowRenewalDialog(true);
-        }
+                  }
       }
     };
     loadUserData();
@@ -184,22 +180,6 @@ const Dashboard = () => {
     return () => { clearInterval(interval); clearInterval(saveInterval); };
   }, []);
 
-  const handleRenewalAccept = () => {
-    // Go to topup to pay
-    const level = storeDataRef.current.store_level;
-    const packPrice = PACK_PRICE[level] || 92;
-    setShowRenewalDialog(false);
-    navigate(`/topup?amount=${packPrice}&plan=${encodeURIComponent(level)}`);
-  };
-
-  const handleRenewalReject = () => {
-    // Save in sessionStorage so it persists across refreshes in same tab
-    sessionStorage.setItem(`renewal_closed_${userIdRef.current}`, "true");
-    renewalBlockedRef.current = true;
-    renewalShownRef.current = true;
-    setShowRenewalDialog(false);
-    toast.error("تم إيقاف الباقة — الربح موقوف");
-  };
 
   const handleLogout = async () => {
     if (userIdRef.current && storeDataRef.current.total_topup > 0) {
@@ -250,45 +230,10 @@ const Dashboard = () => {
     { label: isAr ? "تحميل" : "Download", icon: Download },
   ];
 
-  const packActive = storeData.total_topup > 0 && liveBalance >= (PACK_PRICE[storeData.store_level] || 92) && !renewalBlockedRef.current;
+  const packActive = storeData.total_topup > 0 && liveBalance >= (PACK_PRICE[storeData.store_level] || 92);
 
   return (
     <div className="min-h-screen bg-background pb-24">
-
-      {/* Renewal Dialog */}
-      {showRenewalDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-          <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 max-w-sm w-full shadow-2xl space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center">
-                <Bell className="w-6 h-6 text-orange-500" />
-              </div>
-              <div>
-                <h2 className="font-bold text-lg">⚠️ {isAr ? "تنبيه الباقة" : "Pack Alert"}</h2>
-                <p className="text-sm text-muted-foreground">{isAr ? "رصيدك أقل من سعر الباقة" : "Balance below pack price"}</p>
-              </div>
-            </div>
-            <div className="bg-orange-50 rounded-xl p-4">
-              <p className="text-sm text-orange-700 font-medium">
-                {isAr
-                  ? `باقتك (${storeData.store_level}) تحتاج $${PACK_PRICE[storeData.store_level] || 92} للاستمرار. هل توافق على خصم المبلغ وتجديد الباقة؟`
-                  : `Your pack (${storeData.store_level}) needs $${PACK_PRICE[storeData.store_level] || 92} to continue. Do you approve the renewal?`}
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={handleRenewalReject} className="py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50">
-                ❌ {isAr ? "لا، أوقف" : "No, Stop"}
-              </button>
-              <button onClick={handleRenewalAccept} className="py-3 rounded-xl bg-green-600 text-white font-bold text-sm hover:bg-green-700">
-                ✅ {isAr ? "نعم، جدد" : "Yes, Renew"}
-              </button>
-            </div>
-            <Link to="/topup" className="block text-center text-sm text-primary font-medium hover:underline" onClick={() => setShowRenewalDialog(false)}>
-              {isAr ? "اشحن رصيداً أولاً →" : "Top up first →"}
-            </Link>
-          </div>
-        </div>
-      )}
 
       <div className="bg-primary text-primary-foreground px-4 py-3 pt-16 text-center flex items-center justify-between">
         <p className="text-sm font-medium flex-1 text-center">
@@ -335,7 +280,6 @@ const Dashboard = () => {
               <p className="text-xs text-muted-foreground">{isAr ? "رصيد المتجر" : "My Store Credit"}</p>
               <p className="text-3xl font-bold text-foreground tabular-nums">{liveBalance.toFixed(6)} USDT</p>
               {packActive && <p className="text-xs text-green-500 mt-1">📈 {isAr ? "الربح يتزاد الآن" : "Earning now..."}</p>}
-              {renewalBlockedRef.current && <p className="text-xs text-red-500 mt-1">⛔ {isAr ? "الباقة موقوفة" : "Pack stopped"}</p>}
             </div>
           </CardContent>
         </Card>

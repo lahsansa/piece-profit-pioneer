@@ -14,21 +14,20 @@ import { toast } from "sonner";
 
 const generateReferralCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
 
-// Profit per second for each store level (max daily / 86400)
 const PROFIT_PER_SECOND: Record<string, number> = {
-  "Small shop":   11.5   / 86400,
-  "Medium shop":  39     / 86400,
-  "Large shop":   92     / 86400,
-  "Mega shop":    135    / 86400,
-  "VIP":          220    / 86400,
+  "Small shop":  11.5  / 86400,
+  "Medium shop": 39    / 86400,
+  "Large shop":  92    / 86400,
+  "Mega shop":   135   / 86400,
+  "VIP":         220   / 86400,
 };
 
 const PACK_PRICE: Record<string, number> = {
-  "Small shop":   92,
-  "Medium shop":  320,
-  "Large shop":   700,
-  "Mega shop":    1000,
-  "VIP":          1500,
+  "Small shop":  92,
+  "Medium shop": 320,
+  "Large shop":  700,
+  "Mega shop":   1000,
+  "VIP":         1500,
 };
 
 const Dashboard = () => {
@@ -50,11 +49,16 @@ const Dashboard = () => {
     team_earnings: 0,
   });
   const [liveProfit, setLiveProfit] = useState(0);
+  const [liveBalance, setLiveBalance] = useState(0);
   const lastSaveRef = useRef<Date>(new Date());
   const storeDataRef = useRef(storeData);
+  const liveProfitRef = useRef(0);
+  const liveBalanceRef = useRef(0);
   const userIdRef = useRef("");
 
   useEffect(() => { storeDataRef.current = storeData; }, [storeData]);
+  useEffect(() => { liveProfitRef.current = liveProfit; }, [liveProfit]);
+  useEffect(() => { liveBalanceRef.current = liveBalance; }, [liveBalance]);
 
   useEffect(() => {
     const loadUserData = async () => {
@@ -92,13 +96,16 @@ const Dashboard = () => {
 
       if (store) {
         setReferralCode(store.referral_code || "");
-        setLiveProfit(Number(store.total_profit));
+        const profit = Number(store.total_profit);
+        const balance = Number(store.balance);
+        setLiveProfit(profit);
+        setLiveBalance(balance);
         lastSaveRef.current = new Date(store.last_profit_update || new Date());
         setStoreData({
           store_level: store.store_level,
-          balance: Number(store.balance),
+          balance: balance,
           total_topup: Number(store.total_topup),
-          total_profit: Number(store.total_profit),
+          total_profit: profit,
           team_earnings: Number(store.team_earnings || 0),
         });
       }
@@ -106,45 +113,52 @@ const Dashboard = () => {
     loadUserData();
   }, [navigate]);
 
-  // Real-time profit ticker — updates every second
+  // Real-time profit + balance ticker
   useEffect(() => {
     const interval = setInterval(() => {
       const level = storeDataRef.current.store_level;
       const topup = storeDataRef.current.total_topup;
-      
-      // Only earn profit if balance >= pack price
       const packPrice = PACK_PRICE[level] || 92;
-      const currentBalance = storeDataRef.current.balance;
+      const currentBalance = liveBalanceRef.current;
+
+      // Only earn if topup done AND balance >= pack price
       if (topup <= 0 || currentBalance < packPrice) return;
 
       const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
-      
+
       setLiveProfit(prev => {
         const newProfit = prev + perSecond;
-
-        // Save to database every hour
-        const now = new Date();
-        const secondsSinceLastSave = (now.getTime() - lastSaveRef.current.getTime()) / 1000;
-        if (secondsSinceLastSave >= 3600 && userIdRef.current) {
-          lastSaveRef.current = now;
-          supabase.from("user_stores").update({
-            total_profit: newProfit,
-            last_profit_update: now.toISOString(),
-          }).eq("user_id", userIdRef.current);
-        }
-
+        liveProfitRef.current = newProfit;
         return newProfit;
       });
+
+      setLiveBalance(prev => {
+        const newBalance = prev + perSecond;
+        liveBalanceRef.current = newBalance;
+        return newBalance;
+      });
+
+      // Save to database every minute
+      const now = new Date();
+      const secondsSinceLastSave = (now.getTime() - lastSaveRef.current.getTime()) / 1000;
+      if (secondsSinceLastSave >= 60 && userIdRef.current) {
+        lastSaveRef.current = now;
+        supabase.from("user_stores").update({
+          total_profit: liveProfitRef.current,
+          balance: liveBalanceRef.current,
+          last_profit_update: now.toISOString(),
+        }).eq("user_id", userIdRef.current);
+      }
     }, 1000);
 
     return () => clearInterval(interval);
   }, []);
 
   const handleLogout = async () => {
-    // Save profit before logout
     if (userIdRef.current && storeDataRef.current.total_topup > 0) {
       await supabase.from("user_stores").update({
-        total_profit: liveProfit,
+        total_profit: liveProfitRef.current,
+        balance: liveBalanceRef.current,
         last_profit_update: new Date().toISOString(),
       }).eq("user_id", userIdRef.current);
     }
@@ -188,6 +202,8 @@ const Dashboard = () => {
     { label: isAr ? "قرض" : "Loan", icon: Landmark },
     { label: isAr ? "تحميل" : "Download", icon: Download },
   ];
+
+  const packActive = storeData.total_topup > 0 && liveBalance >= (PACK_PRICE[storeData.store_level] || 92);
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -233,9 +249,11 @@ const Dashboard = () => {
                 </p>
               </div>
             </div>
+            {/* Live balance */}
             <div className="bg-muted/50 rounded-xl p-3 text-center">
               <p className="text-xs text-muted-foreground">{isAr ? "رصيد المتجر" : "My Store Credit"}</p>
-              <p className="text-3xl font-bold text-foreground">{storeData.balance.toFixed(2)} USDT</p>
+              <p className="text-3xl font-bold text-foreground tabular-nums">{liveBalance.toFixed(6)} USDT</p>
+              {packActive && <p className="text-xs text-green-500 mt-1">📈 {isAr ? "الربح يتزاد الآن" : "Earning now..."}</p>}
             </div>
           </CardContent>
         </Card>
@@ -278,17 +296,16 @@ const Dashboard = () => {
           })}
         </div>
 
-        {/* Store data with live profit */}
+        {/* Store data */}
         <Card className="shadow-md border-0">
           <CardContent className="p-4 space-y-3">
             <h3 className="text-sm font-bold text-foreground">{isAr ? "بيانات المتجر" : "Store Data"}</h3>
 
             <div className="flex items-center justify-between py-2 border-b border-border/50">
               <span className="text-sm text-muted-foreground">{isAr ? "إجمالي الشحن" : "Total Topup"}</span>
-              <span className="text-sm font-bold text-foreground">{storeData.total_topup.toFixed(2)}</span>
+              <span className="text-sm font-bold">{storeData.total_topup.toFixed(2)}</span>
             </div>
 
-            {/* Live profit counter */}
             <div className="flex items-center justify-between py-2 border-b border-border/50">
               <span className="text-sm text-muted-foreground">{isAr ? "إجمالي الأرباح" : "Total Profit"}</span>
               <span className="text-sm font-bold text-green-500 tabular-nums">
@@ -298,18 +315,16 @@ const Dashboard = () => {
 
             <div className="flex items-center justify-between py-2">
               <span className="text-sm text-muted-foreground">{isAr ? "أرباح الفريق" : "Team Earnings"}</span>
-              <span className="text-sm font-bold text-foreground">{storeData.team_earnings.toFixed(2)}</span>
+              <span className="text-sm font-bold">{storeData.team_earnings.toFixed(2)}</span>
             </div>
 
             {/* Pack status */}
             {storeData.total_topup > 0 && (
-              storeData.balance >= (PACK_PRICE[storeData.store_level] || 92) ? (
+              packActive ? (
                 <div className="bg-green-50 rounded-xl p-3 text-center">
                   <p className="text-xs text-green-600 font-medium">
-                    📈 {isAr ? "معدل الربح اليومي" : "Daily profit rate"}:{" "}
-                    <span className="font-bold">
-                      ~${((PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400).toFixed(2)}/day
-                    </span>
+                    📈 {isAr ? "معدل الربح اليومي" : "Daily rate"}:{" "}
+                    <span className="font-bold">~${((PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400).toFixed(2)}/day</span>
                   </p>
                   <p className="text-xs text-green-500 mt-1">✅ {isAr ? "الباقة نشطة" : "Pack is active"}</p>
                 </div>

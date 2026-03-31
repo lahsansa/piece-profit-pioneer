@@ -6,7 +6,7 @@ import { useLang } from "@/hooks/use-lang";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Wallet, ArrowDownToLine, CreditCard, UserCog,
-  Globe, Landmark, Download, Search, User, Shield, LogOut, Copy, Check,
+  Globe, Landmark, Download, Search, User, Shield, LogOut, Copy, Check, Bell,
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -50,10 +50,13 @@ const Dashboard = () => {
   });
   const [liveProfit, setLiveProfit] = useState(0);
   const [liveBalance, setLiveBalance] = useState(0);
+  const [showRenewalDialog, setShowRenewalDialog] = useState(false);
+  const [renewalHandled, setRenewalHandled] = useState(false);
   const storeDataRef = useRef(storeData);
   const liveProfitRef = useRef(0);
   const liveBalanceRef = useRef(0);
   const userIdRef = useRef("");
+  const renewalSentRef = useRef(false);
 
   useEffect(() => { storeDataRef.current = storeData; }, [storeData]);
 
@@ -101,7 +104,6 @@ const Dashboard = () => {
         const dbProfit = Number(store.total_profit);
         const totalTopup = Number(store.total_topup);
 
-        // Calculate profit earned since last DB update
         const lastUpdate = new Date(store.last_profit_update || new Date());
         const secondsPassed = Math.max(0, (new Date().getTime() - lastUpdate.getTime()) / 1000);
 
@@ -125,6 +127,12 @@ const Dashboard = () => {
           total_profit: dbProfit,
           team_earnings: Number(store.team_earnings || 0),
         });
+
+        // Check if balance < pack price → show renewal dialog
+        if (totalTopup > 0 && dbBalance < packPrice && !renewalSentRef.current) {
+          renewalSentRef.current = true;
+          setShowRenewalDialog(true);
+        }
       }
     };
     loadUserData();
@@ -136,7 +144,7 @@ const Dashboard = () => {
       const level = storeDataRef.current.store_level;
       const topup = storeDataRef.current.total_topup;
       const packPrice = PACK_PRICE[level] || 92;
-      if (topup <= 0 || liveBalanceRef.current < packPrice) return;
+      if (topup <= 0 || liveBalanceRef.current < packPrice || renewalHandled === false && showRenewalDialog) return;
 
       const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
       const newProfit = liveProfitRef.current + perSecond;
@@ -145,6 +153,12 @@ const Dashboard = () => {
       liveBalanceRef.current = newBalance;
       setLiveProfit(newProfit);
       setLiveBalance(newBalance);
+
+      // Check if balance dropped below pack price
+      if (newBalance < packPrice && !renewalSentRef.current) {
+        renewalSentRef.current = true;
+        setShowRenewalDialog(true);
+      }
     }, 1000);
 
     // Save to DB every 10 seconds
@@ -157,11 +171,50 @@ const Dashboard = () => {
       }).eq("user_id", userIdRef.current);
     }, 10000);
 
-    return () => {
-      clearInterval(interval);
-      clearInterval(saveInterval);
-    };
-  }, []);
+    return () => { clearInterval(interval); clearInterval(saveInterval); };
+  }, [showRenewalDialog, renewalHandled]);
+
+  const handleRenewalAccept = async () => {
+    const level = storeDataRef.current.store_level;
+    const packPrice = PACK_PRICE[level] || 92;
+
+    // Deduct pack price from balance
+    const newBalance = liveBalanceRef.current - packPrice;
+    liveBalanceRef.current = newBalance;
+    setLiveBalance(newBalance);
+
+    await supabase.from("user_stores").update({
+      balance: newBalance,
+      last_profit_update: new Date().toISOString(),
+    }).eq("user_id", userIdRef.current);
+
+    // Send notification
+    await supabase.from("notifications").insert({
+      user_id: userIdRef.current,
+      message: `✅ تم تجديد باقة ${level} بنجاح — تم خصم $${packPrice}`,
+      type: "success",
+    });
+
+    toast.success(`✅ تم تجديد الباقة! تم خصم $${packPrice}`);
+    setShowRenewalDialog(false);
+    setRenewalHandled(true);
+    renewalSentRef.current = false;
+  };
+
+  const handleRenewalReject = async () => {
+    const level = storeDataRef.current.store_level;
+
+    await supabase.from("notifications").insert({
+      user_id: userIdRef.current,
+      message: `⚠️ تم إيقاف باقة ${level} — الربح موقوف حتى تشحن رصيداً كافياً`,
+      type: "warning",
+    });
+
+    toast.error("تم إيقاف الباقة — الربح موقوف");
+    setShowRenewalDialog(false);
+    setRenewalHandled(false);
+    renewalSentRef.current = false;
+  };
 
   const handleLogout = async () => {
     if (userIdRef.current && storeDataRef.current.total_topup > 0) {
@@ -212,10 +265,59 @@ const Dashboard = () => {
     { label: isAr ? "تحميل" : "Download", icon: Download },
   ];
 
-  const packActive = storeData.total_topup > 0 && liveBalance >= (PACK_PRICE[storeData.store_level] || 92);
+  const packActive = storeData.total_topup > 0 && liveBalance >= (PACK_PRICE[storeData.store_level] || 92) && !showRenewalDialog;
 
   return (
     <div className="min-h-screen bg-background pb-24">
+
+      {/* Renewal Dialog */}
+      {showRenewalDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 max-w-sm w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center">
+                <Bell className="w-6 h-6 text-orange-500" />
+              </div>
+              <div>
+                <h2 className="font-bold text-lg">⚠️ {isAr ? "تنبيه الباقة" : "Pack Alert"}</h2>
+                <p className="text-sm text-muted-foreground">{isAr ? "رصيدك أقل من سعر الباقة" : "Balance below pack price"}</p>
+              </div>
+            </div>
+
+            <div className="bg-orange-50 rounded-xl p-4">
+              <p className="text-sm text-orange-700 font-medium">
+                {isAr
+                  ? `باقتك (${storeData.store_level}) تحتاج $${PACK_PRICE[storeData.store_level] || 92} للاستمرار. هل توافق على خصم المبلغ وتجديد الباقة؟`
+                  : `Your pack (${storeData.store_level}) needs $${PACK_PRICE[storeData.store_level] || 92} to continue. Do you approve the renewal?`}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={handleRenewalReject}
+                className="py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50"
+              >
+                ❌ {isAr ? "لا، أوقف" : "No, Stop"}
+              </button>
+              <button
+                onClick={handleRenewalAccept}
+                className="py-3 rounded-xl bg-green-600 text-white font-bold text-sm hover:bg-green-700"
+              >
+                ✅ {isAr ? "نعم، جدد" : "Yes, Renew"}
+              </button>
+            </div>
+
+            <Link
+              to="/topup"
+              className="block text-center text-sm text-primary font-medium hover:underline"
+              onClick={() => setShowRenewalDialog(false)}
+            >
+              {isAr ? "اشحن رصيداً أولاً →" : "Top up first →"}
+            </Link>
+          </div>
+        </div>
+      )}
+
       <div className="bg-primary text-primary-foreground px-4 py-3 pt-16 text-center flex items-center justify-between">
         <p className="text-sm font-medium flex-1 text-center">
           {isAr ? "مستوى المتجر" : "Position"}:{" "}
@@ -238,7 +340,6 @@ const Dashboard = () => {
           </Link>
         )}
 
-        {/* User info card */}
         <Card className="shadow-md border-0 overflow-hidden">
           <CardContent className="p-5">
             <div className="flex items-center gap-4 mb-4">
@@ -262,11 +363,11 @@ const Dashboard = () => {
               <p className="text-xs text-muted-foreground">{isAr ? "رصيد المتجر" : "My Store Credit"}</p>
               <p className="text-3xl font-bold text-foreground tabular-nums">{liveBalance.toFixed(6)} USDT</p>
               {packActive && <p className="text-xs text-green-500 mt-1">📈 {isAr ? "الربح يتزاد الآن" : "Earning now..."}</p>}
+              {showRenewalDialog && <p className="text-xs text-orange-500 mt-1">⚠️ {isAr ? "الربح موقوف مؤقتاً" : "Earning paused"}</p>}
             </div>
           </CardContent>
         </Card>
 
-        {/* Referral Card */}
         {referralCode && (
           <Card className="shadow-md border-0 bg-primary text-primary-foreground">
             <CardContent className="p-4 space-y-3">
@@ -289,7 +390,6 @@ const Dashboard = () => {
           </Card>
         )}
 
-        {/* Quick actions */}
         <div className="grid grid-cols-4 gap-3">
           {quickActions.map((action) => {
             const content = (
@@ -304,29 +404,24 @@ const Dashboard = () => {
           })}
         </div>
 
-        {/* Store data */}
         <Card className="shadow-md border-0">
           <CardContent className="p-4 space-y-3">
             <h3 className="text-sm font-bold text-foreground">{isAr ? "بيانات المتجر" : "Store Data"}</h3>
-
             <div className="flex items-center justify-between py-2 border-b border-border/50">
               <span className="text-sm text-muted-foreground">{isAr ? "إجمالي الشحن" : "Total Topup"}</span>
               <span className="text-sm font-bold">{storeData.total_topup.toFixed(2)}</span>
             </div>
-
             <div className="flex items-center justify-between py-2 border-b border-border/50">
               <span className="text-sm text-muted-foreground">{isAr ? "إجمالي الأرباح" : "Total Profit"}</span>
               <span className="text-sm font-bold text-green-500 tabular-nums">
                 {storeData.total_topup > 0 ? liveProfit.toFixed(6) : "0.000000"}
               </span>
             </div>
-
             <div className="flex items-center justify-between py-2">
               <span className="text-sm text-muted-foreground">{isAr ? "أرباح الفريق" : "Team Earnings"}</span>
               <span className="text-sm font-bold">{storeData.team_earnings.toFixed(2)}</span>
             </div>
 
-            {/* Pack status */}
             {storeData.total_topup > 0 && (
               packActive ? (
                 <div className="bg-green-50 rounded-xl p-3 text-center">
@@ -339,12 +434,7 @@ const Dashboard = () => {
               ) : (
                 <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
                   <p className="text-xs text-orange-600 font-bold">
-                    ⚠️ {isAr ? "الرصيد غير كافٍ لتفعيل الباقة" : "Insufficient balance to activate pack"}
-                  </p>
-                  <p className="text-xs text-orange-500 mt-1">
-                    {isAr ? "تحتاج" : "You need"}{" "}
-                    <span className="font-bold">${PACK_PRICE[storeData.store_level] || 92}</span>
-                    {" "}{isAr ? "لتفعيل" : "to activate"} {storeData.store_level}
+                    ⚠️ {isAr ? "الباقة موقوفة" : "Pack is stopped"}
                   </p>
                   <Link to="/topup" className="inline-block mt-2 bg-orange-500 text-white text-xs font-bold px-4 py-1.5 rounded-full">
                     {isAr ? "أكمل الشحن" : "Top up now"} →
@@ -355,7 +445,6 @@ const Dashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Search by date */}
         <Card className="shadow-md border-0">
           <CardContent className="p-4">
             <div className="flex gap-2">
@@ -368,7 +457,6 @@ const Dashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Bottom links */}
         <div className="space-y-2">
           {bottomLinks.map((link) => (
             <Card key={link.label} className="shadow-sm border-0 cursor-pointer hover:bg-muted/50 transition-colors">

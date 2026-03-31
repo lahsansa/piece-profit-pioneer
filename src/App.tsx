@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -20,11 +20,26 @@ import Orders from "@/pages/Orders";
 import TopupBalance from "@/pages/TopupBalance";
 import Admin from "@/pages/Admin";
 import Withdraw from "@/pages/Withdraw";
-import Withdraw from "@/pages/Withdraw";
-
-
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 const queryClient = new QueryClient();
+
+// Protected route — redirects to /login if not logged in
+const Protected = ({ children }: { children: React.ReactNode }) => {
+  const [checked, setChecked] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setLoggedIn(!!data.session);
+      setChecked(true);
+    });
+  }, []);
+
+  if (!checked) return null;
+  return loggedIn ? <>{children}</> : <Navigate to="/login" replace />;
+};
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -35,21 +50,24 @@ const App = () => (
         <BrowserRouter>
           <Navbar />
           <Routes>
+            {/* Public pages */}
             <Route path="/" element={<Landing />} />
-            <Route path="/business-plan" element={<BusinessPlan />} />
-            <Route path="/products" element={<Products />} />
-            <Route path="/invest" element={<Invest />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/store-levels" element={<StoreLevels />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/news" element={<News />} />
-            <Route path="/team" element={<Team />} />
-            <Route path="/orders" element={<Orders />} />
-            <Route path="/topup" element={<TopupBalance />} />
             <Route path="/admin" element={<Admin />} />
-            <Route path="*" element={<NotFound />} />
-            <Route path="/withdraw" element={<Withdraw />} />
 
+            {/* Protected pages */}
+            <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
+            <Route path="/store-levels" element={<Protected><StoreLevels /></Protected>} />
+            <Route path="/business-plan" element={<Protected><BusinessPlan /></Protected>} />
+            <Route path="/products" element={<Protected><Products /></Protected>} />
+            <Route path="/invest" element={<Protected><Invest /></Protected>} />
+            <Route path="/news" element={<Protected><News /></Protected>} />
+            <Route path="/team" element={<Protected><Team /></Protected>} />
+            <Route path="/orders" element={<Protected><Orders /></Protected>} />
+            <Route path="/topup" element={<Protected><TopupBalance /></Protected>} />
+            <Route path="/withdraw" element={<Protected><Withdraw /></Protected>} />
+
+            <Route path="*" element={<NotFound />} />
           </Routes>
           <BottomNav />
         </BrowserRouter>

@@ -15,7 +15,8 @@ const generateReferralCode = () => {
 };
 
 const Login = () => {
-  const [isRegister, setIsRegister] = useState(false);
+  const [searchParams] = useSearchParams();
+  const [isRegister, setIsRegister] = useState(!!searchParams.get("ref"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [referralCode, setReferralCode] = useState("");

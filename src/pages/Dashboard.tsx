@@ -128,8 +128,9 @@ const Dashboard = () => {
           team_earnings: Number(store.team_earnings || 0),
         });
 
-        // Check if balance < pack price → show renewal dialog
-        if (totalTopup > 0 && dbBalance < packPrice && !renewalSentRef.current) {
+        // Check if balance < pack price AND renewal not handled yet
+        const renewalAlreadyHandled = store.renewal_handled === true;
+        if (totalTopup > 0 && dbBalance < packPrice && !renewalAlreadyHandled) {
           renewalSentRef.current = true;
           setShowRenewalDialog(true);
         }
@@ -186,6 +187,7 @@ const Dashboard = () => {
     await supabase.from("user_stores").update({
       balance: newBalance,
       last_profit_update: new Date().toISOString(),
+      renewal_handled: false,
     }).eq("user_id", userIdRef.current);
 
     // Send notification
@@ -209,6 +211,11 @@ const Dashboard = () => {
       message: `⚠️ تم إيقاف باقة ${level} — الربح موقوف حتى تشحن رصيداً كافياً`,
       type: "warning",
     });
+
+    // Mark renewal as handled so it won't show again
+    await supabase.from("user_stores").update({
+      renewal_handled: true,
+    }).eq("user_id", userIdRef.current);
 
     toast.error("تم إيقاف الباقة — الربح موقوف");
     setShowRenewalDialog(false);

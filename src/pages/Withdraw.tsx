@@ -13,6 +13,7 @@ const Withdraw = () => {
   const [balance, setBalance] = useState(0);
   const [selectedMethod, setSelectedMethod] = useState("TRC20-USDT");
   const [selectedAmount, setSelectedAmount] = useState(10);
+  const [walletAddress, setWalletAddress] = useState("");
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState("");
 
@@ -28,26 +29,27 @@ const Withdraw = () => {
   }, [navigate]);
 
   const handleWithdraw = async () => {
+    if (!walletAddress.trim()) { toast.error("أدخل عنوان المحفظة"); return; }
     if (selectedAmount > balance) { toast.error("الرصيد غير كافٍ"); return; }
     if (selectedAmount < 10) { toast.error("الحد الأدنى للسحب 10 USDT"); return; }
     setLoading(true);
     try {
-      // Insert withdrawal request
       const { error } = await supabase.from("withdrawals").insert({
         user_id: userId,
         amount: selectedAmount,
         method: selectedMethod,
+        wallet_address: walletAddress.trim(),
         status: "pending",
       });
       if (error) throw error;
 
-      // Deduct balance
       await supabase.from("user_stores").update({
         balance: balance - selectedAmount,
       }).eq("user_id", userId);
 
       toast.success(`✅ تم تقديم طلب السحب — ${selectedAmount} USDT`);
       setBalance(prev => prev - selectedAmount);
+      setWalletAddress("");
     } catch (err: any) {
       toast.error(err.message || "حدث خطأ");
     } finally {
@@ -63,7 +65,7 @@ const Withdraw = () => {
           <ChevronLeft className="w-6 h-6 text-gray-700" />
         </button>
         <h1 className="text-lg font-semibold text-gray-800">Withdraw</h1>
-        <span className="text-sm text-gray-400 w-10" />
+        <span className="w-10" />
       </div>
 
       <div className="space-y-3 p-4">
@@ -81,17 +83,27 @@ const Withdraw = () => {
             <p className="text-sm font-semibold text-gray-700 mb-2">Withdrawal method</p>
             <div className="flex gap-2 flex-wrap">
               {METHODS.map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setSelectedMethod(m)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    selectedMethod === m ? "bg-[#4A90D9] text-white" : "bg-gray-100 text-gray-500"
-                  }`}
-                >
+                <button key={m} onClick={() => setSelectedMethod(m)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${selectedMethod === m ? "bg-[#4A90D9] text-white" : "bg-gray-100 text-gray-500"}`}>
                   {m}
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Wallet Address */}
+          <div>
+            <p className="text-sm font-semibold text-gray-700 mb-2">Wallet Address</p>
+            <input
+              type="text"
+              placeholder="Enter your wallet address..."
+              value={walletAddress}
+              onChange={(e) => setWalletAddress(e.target.value)}
+              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-400 font-mono"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              {selectedMethod === "TRC20-USDT" ? "TRC20 address starts with T..." : selectedMethod === "BEP20-USDT" ? "BEP20 address starts with 0x..." : "USDC address starts with 0x..."}
+            </p>
           </div>
 
           {/* Amount */}
@@ -99,13 +111,8 @@ const Withdraw = () => {
             <p className="text-sm font-semibold text-gray-700 mb-2">Amount</p>
             <div className="grid grid-cols-4 gap-2">
               {AMOUNTS.map((a) => (
-                <button
-                  key={a}
-                  onClick={() => setSelectedAmount(a)}
-                  className={`py-3 rounded-xl text-sm font-bold transition-all ${
-                    selectedAmount === a ? "bg-[#4A90D9] text-white" : "bg-gray-100 text-gray-500"
-                  }`}
-                >
+                <button key={a} onClick={() => setSelectedAmount(a)}
+                  className={`py-3 rounded-xl text-sm font-bold transition-all ${selectedAmount === a ? "bg-[#4A90D9] text-white" : "bg-gray-100 text-gray-500"}`}>
                   {a.toLocaleString()}
                 </button>
               ))}
@@ -127,6 +134,12 @@ const Withdraw = () => {
               <span className="text-gray-500">You receive</span>
               <span className="font-bold text-green-600">{(selectedAmount - FEE).toFixed(2)} USDT</span>
             </div>
+            {walletAddress && (
+              <div className="flex justify-between text-sm border-t pt-1 mt-1">
+                <span className="text-gray-500">To</span>
+                <span className="font-mono text-xs text-gray-700 truncate max-w-[180px]">{walletAddress}</span>
+              </div>
+            )}
           </div>
 
           {/* Submit */}

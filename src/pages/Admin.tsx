@@ -339,6 +339,7 @@ const Admin = () => {
                           <div className="flex justify-between gap-8"><span className="text-muted-foreground text-sm">Account ID:</span><span className="font-mono text-sm font-bold">{w.user_id.slice(0, 8).toUpperCase()}</span></div>
                           <div className="flex justify-between gap-8"><span className="text-muted-foreground text-sm">المبلغ:</span><span className="font-bold text-red-500 text-xl">{w.amount} USDT</span></div>
                           <div className="flex justify-between gap-8"><span className="text-muted-foreground text-sm">الطريقة:</span><span className="font-mono text-xs bg-muted px-2 py-1 rounded">{w.method}</span></div>
+                          <div className="flex justify-between gap-8"><span className="text-muted-foreground text-sm">المحفظة:</span><span className="font-mono text-xs bg-blue-50 px-2 py-1 rounded text-blue-700 break-all">{w.wallet_address || "—"}</span></div>
                           <div className="flex justify-between gap-8"><span className="text-muted-foreground text-sm">التاريخ:</span><span className="text-xs">{new Date(w.created_at).toLocaleString("ar")}</span></div>
                         </div>
                         <div className="flex gap-3 items-end">
@@ -357,13 +358,14 @@ const Admin = () => {
                 <CardHeader><CardTitle>سجل السحبات</CardTitle></CardHeader>
                 <CardContent>
                   <Table>
-                    <TableHeader><TableRow><TableHead>Account ID</TableHead><TableHead>المبلغ</TableHead><TableHead>الطريقة</TableHead><TableHead>الحالة</TableHead><TableHead>التاريخ</TableHead></TableRow></TableHeader>
+                    <TableHeader><TableRow><TableHead>Account ID</TableHead><TableHead>المبلغ</TableHead><TableHead>الطريقة</TableHead><TableHead>المحفظة</TableHead><TableHead>الحالة</TableHead><TableHead>التاريخ</TableHead></TableRow></TableHeader>
                     <TableBody>
                       {otherWithdrawals.map((w) => (
                         <TableRow key={w.id}>
                           <TableCell className="font-mono text-xs font-bold">{w.user_id.slice(0, 8).toUpperCase()}</TableCell>
                           <TableCell className="font-bold text-red-500">{w.amount} USDT</TableCell>
                           <TableCell className="text-xs">{w.method}</TableCell>
+                          <TableCell className="font-mono text-xs max-w-[120px] truncate">{w.wallet_address || "—"}</TableCell>
                           <TableCell><Badge variant={w.status === "confirmed" ? "default" : "destructive"}>{w.status === "confirmed" ? "✅ مؤكد" : "❌ مرفوض"}</Badge></TableCell>
                           <TableCell className="text-xs text-muted-foreground">{new Date(w.created_at).toLocaleString("ar")}</TableCell>
                         </TableRow>

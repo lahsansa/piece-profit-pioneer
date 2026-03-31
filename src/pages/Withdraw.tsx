@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Clock, XCircle } from "lucide-react";
 
 const AMOUNTS = [10, 30, 70, 140, 300, 600, 1400, 3500, 6000, 8000, 35000, 70000];
 const FEE = 0.8;
@@ -16,6 +16,8 @@ const Withdraw = () => {
   const [walletAddress, setWalletAddress] = useState("");
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState("");
+  const [pendingWithdrawals, setPendingWithdrawals] = useState([]);
+  const [cancelling, setCancelling] = useState("");
 
   useEffect(() => {
     const load = async () => {
@@ -24,6 +26,9 @@ const Withdraw = () => {
       setUserId(user.id);
       const { data: store } = await supabase.from("user_stores").select("balance").eq("user_id", user.id).maybeSingle();
       if (store) setBalance(Number(store.balance));
+      // Load pending withdrawals
+      const { data: withdraws } = await supabase.from("withdrawals").select("*").eq("user_id", user.id).eq("status", "pending").order("created_at", { ascending: false });
+      if (withdraws) setPendingWithdrawals(withdraws);
     };
     load();
   }, [navigate]);
@@ -43,17 +48,39 @@ const Withdraw = () => {
       });
       if (error) throw error;
 
-      await supabase.from("user_stores").update({
-        balance: balance - selectedAmount,
-      }).eq("user_id", userId);
-
+      await supabase.from("user_stores").update({ balance: balance - selectedAmount }).eq("user_id", userId);
       toast.success(`✅ تم تقديم طلب السحب — ${selectedAmount} USDT`);
       setBalance(prev => prev - selectedAmount);
       setWalletAddress("");
+
+      // Refresh pending withdrawals
+      const { data: withdraws } = await supabase.from("withdrawals").select("*").eq("user_id", userId).eq("status", "pending").order("created_at", { ascending: false });
+      if (withdraws) setPendingWithdrawals(withdraws);
     } catch (err: any) {
       toast.error(err.message || "حدث خطأ");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCancel = async (w: any) => {
+    setCancelling(w.id);
+    try {
+      // Update status to cancelled
+      await supabase.from("withdrawals").update({ status: "cancelled" }).eq("id", w.id);
+      // Refund balance
+      const { data: store } = await supabase.from("user_stores").select("balance").eq("user_id", userId).single();
+      if (store) {
+        const refund = Number(w.amount);
+        await supabase.from("user_stores").update({ balance: Number(store.balance) + refund }).eq("user_id", userId);
+        setBalance(Number(store.balance) + refund);
+      }
+      toast.success(`✅ تم إلغاء طلب السحب — تم إرجاع ${w.amount} USDT`);
+      setPendingWithdrawals(prev => prev.filter((x: any) => x.id !== w.id));
+    } catch (err: any) {
+      toast.error(err.message || "حدث خطأ");
+    } finally {
+      setCancelling("");
     }
   };
 
@@ -75,9 +102,35 @@ const Withdraw = () => {
           <p className="text-4xl font-bold text-white">{balance.toFixed(2)} <span className="text-xl">USDT</span></p>
         </div>
 
+        {/* Pending withdrawals */}
+        {pendingWithdrawals.length > 0 && (
+          <div className="bg-white rounded-2xl p-4 space-y-3">
+            <p className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-orange-500" /> Pending Withdrawals
+            </p>
+            {pendingWithdrawals.map((w: any) => (
+              <div key={w.id} className="bg-orange-50 border border-orange-200 rounded-xl p-3 flex items-center justify-between">
+                <div>
+                  <p className="font-bold text-orange-600">{w.amount} USDT</p>
+                  <p className="text-xs text-gray-500">{w.method}</p>
+                  <p className="text-xs font-mono text-gray-400 truncate max-w-[180px]">{w.wallet_address}</p>
+                  <p className="text-xs text-gray-400">{new Date(w.created_at).toLocaleString()}</p>
+                </div>
+                <button
+                  onClick={() => handleCancel(w)}
+                  disabled={cancelling === w.id}
+                  className="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1 disabled:opacity-50"
+                >
+                  <XCircle className="w-4 h-4" />
+                  {cancelling === w.id ? "..." : "Cancel"}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Form */}
         <div className="bg-white rounded-2xl p-4 space-y-4">
-
           {/* Method */}
           <div>
             <p className="text-sm font-semibold text-gray-700 mb-2">Withdrawal method</p>
@@ -102,7 +155,7 @@ const Withdraw = () => {
               className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-400 font-mono"
             />
             <p className="text-xs text-gray-400 mt-1">
-              {selectedMethod === "TRC20-USDT" ? "TRC20 address starts with T..." : selectedMethod === "BEP20-USDT" ? "BEP20 address starts with 0x..." : "USDC address starts with 0x..."}
+              {selectedMethod === "TRC20-USDT" ? "TRC20 address starts with T..." : "BEP20 address starts with 0x..."}
             </p>
           </div>
 
@@ -142,7 +195,6 @@ const Withdraw = () => {
             )}
           </div>
 
-          {/* Submit */}
           <button
             onClick={handleWithdraw}
             disabled={loading || selectedAmount > balance}

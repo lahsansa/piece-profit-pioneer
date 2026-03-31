@@ -156,7 +156,7 @@ const Dashboard = () => {
       const packPrice = PACK_PRICE[level] || 92;
 
       // Stop if: no topup, balance low, renewal blocked, or dialog showing
-      if (topup <= 0 || liveBalanceRef.current < packPrice || renewalBlockedRef.current || renewalShownRef.current) return;
+      if (topup <= 0 || liveBalanceRef.current < packPrice || renewalBlockedRef.current) return;
 
       const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
       const newProfit = liveProfitRef.current + perSecond;
@@ -166,11 +166,7 @@ const Dashboard = () => {
       setLiveProfit(newProfit);
       setLiveBalance(newBalance);
 
-      // Show renewal dialog once when balance drops below pack price
-      if (newBalance < packPrice && !renewalShownRef.current && !renewalBlockedRef.current) {
-        renewalShownRef.current = true;
-        setShowRenewalDialog(true);
-      }
+      // No renewal check in interval — only shown on page load
     }, 1000);
 
     // Save to DB every 10 seconds

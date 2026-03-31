@@ -186,39 +186,20 @@ const Dashboard = () => {
     return () => { clearInterval(interval); clearInterval(saveInterval); };
   }, []);
 
-  const handleRenewalAccept = async () => {
+  const handleRenewalAccept = () => {
+    // Go to topup to pay
     const level = storeDataRef.current.store_level;
     const packPrice = PACK_PRICE[level] || 92;
-    const newBalance = liveBalanceRef.current - packPrice;
-    liveBalanceRef.current = newBalance;
-    setLiveBalance(newBalance);
-
-    await supabase.from("user_stores").update({
-      balance: newBalance,
-      renewal_handled: false,
-      last_profit_update: new Date().toISOString(),
-    }).eq("user_id", userIdRef.current);
-
-    renewalBlockedRef.current = false;
-    renewalShownRef.current = false;
-    toast.success(`✅ تم تجديد الباقة! تم خصم $${packPrice}`);
     setShowRenewalDialog(false);
+    navigate(`/topup?amount=${packPrice}&plan=${encodeURIComponent(level)}`);
   };
 
-  const handleRenewalReject = async () => {
-    const level = storeDataRef.current.store_level;
-
-    // Save renewal_handled = true in DB FIRST
-    await supabase.from("user_stores").update({
-      renewal_handled: true,
-    }).eq("user_id", userIdRef.current);
-
-    // Block permanently
+  const handleRenewalReject = () => {
+    // Just close the dialog — stop earning, never show again this session
     renewalBlockedRef.current = true;
     renewalShownRef.current = true;
-
-    toast.error("تم إيقاف الباقة — الربح موقوف");
     setShowRenewalDialog(false);
+    toast.error("تم إيقاف الباقة — الربح موقوف");
   };
 
   const handleLogout = async () => {

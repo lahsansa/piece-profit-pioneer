@@ -113,45 +113,50 @@ const Dashboard = () => {
     loadUserData();
   }, [navigate]);
 
-  // Real-time profit + balance ticker
+  // Real-time ticker — local increment every second
   useEffect(() => {
-    const interval = setInterval(() => {
+    const localTicker = setInterval(() => {
       const level = storeDataRef.current.store_level;
       const topup = storeDataRef.current.total_topup;
       const packPrice = PACK_PRICE[level] || 92;
       const currentBalance = liveBalanceRef.current;
-
-      // Only earn if topup done AND balance >= pack price
       if (topup <= 0 || currentBalance < packPrice) return;
-
       const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
-
-      setLiveProfit(prev => {
-        const newProfit = prev + perSecond;
-        liveProfitRef.current = newProfit;
-        return newProfit;
-      });
-
-      setLiveBalance(prev => {
-        const newBalance = prev + perSecond;
-        liveBalanceRef.current = newBalance;
-        return newBalance;
-      });
-
-      // Save to database every minute
-      const now = new Date();
-      const secondsSinceLastSave = (now.getTime() - lastSaveRef.current.getTime()) / 1000;
-      if (secondsSinceLastSave >= 3 && userIdRef.current) {
-        lastSaveRef.current = now;
-        supabase.from("user_stores").update({
-          total_profit: liveProfitRef.current,
-          balance: liveBalanceRef.current,
-          last_profit_update: now.toISOString(),
-        }).eq("user_id", userIdRef.current);
-      }
+      const newProfit = liveProfitRef.current + perSecond;
+      const newBalance = liveBalanceRef.current + perSecond;
+      liveProfitRef.current = newProfit;
+      liveBalanceRef.current = newBalance;
+      setLiveProfit(newProfit);
+      setLiveBalance(newBalance);
     }, 1000);
 
-    return () => clearInterval(interval);
+    // Sync from DB every 5 seconds to stay accurate after refresh
+    const dbSync = setInterval(async () => {
+      if (!userIdRef.current) return;
+      const { data: store } = await supabase
+        .from("user_stores")
+        .select("balance, total_profit")
+        .eq("user_id", userIdRef.current)
+        .single();
+      if (store) {
+        const dbBalance = Number(store.balance);
+        const dbProfit = Number(store.total_profit);
+        // Only update if DB has higher value (cron job updated it)
+        if (dbBalance > liveBalanceRef.current) {
+          liveBalanceRef.current = dbBalance;
+          setLiveBalance(dbBalance);
+        }
+        if (dbProfit > liveProfitRef.current) {
+          liveProfitRef.current = dbProfit;
+          setLiveProfit(dbProfit);
+        }
+      }
+    }, 5000);
+
+    return () => {
+      clearInterval(localTicker);
+      clearInterval(dbSync);
+    };
   }, []);
 
   const handleLogout = async () => {

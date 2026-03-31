@@ -51,14 +51,14 @@ const Dashboard = () => {
   const [liveProfit, setLiveProfit] = useState(0);
   const [liveBalance, setLiveBalance] = useState(0);
   const [showRenewalDialog, setShowRenewalDialog] = useState(false);
-  const [renewalHandled, setRenewalHandled] = useState(false);
-  const [renewalDone, setRenewalDone] = useState(false);
-  const renewalDoneRef = useRef(false);
+
   const storeDataRef = useRef(storeData);
   const liveProfitRef = useRef(0);
   const liveBalanceRef = useRef(0);
   const userIdRef = useRef("");
-  const renewalSentRef = useRef(false);
+  // This ref persists across re-renders and refreshes (loaded from DB)
+  const renewalBlockedRef = useRef(false);
+  const renewalShownRef = useRef(false);
 
   useEffect(() => { storeDataRef.current = storeData; }, [storeData]);
 
@@ -86,6 +86,7 @@ const Dashboard = () => {
           total_profit: 0,
           team_earnings: 0,
           last_profit_update: new Date().toISOString(),
+          renewal_handled: false,
         }).select().single();
         store = newStore;
       }
@@ -106,11 +107,15 @@ const Dashboard = () => {
         const dbProfit = Number(store.total_profit);
         const totalTopup = Number(store.total_topup);
 
+        // Load renewal_handled from DB — this is the KEY fix
+        const isRenewalBlocked = store.renewal_handled === true;
+        renewalBlockedRef.current = isRenewalBlocked;
+
         const lastUpdate = new Date(store.last_profit_update || new Date());
         const secondsPassed = Math.max(0, (new Date().getTime() - lastUpdate.getTime()) / 1000);
 
         let earnedSinceUpdate = 0;
-        if (totalTopup > 0 && dbBalance >= packPrice) {
+        if (totalTopup > 0 && dbBalance >= packPrice && !isRenewalBlocked) {
           earnedSinceUpdate = perSecond * secondsPassed;
         }
 
@@ -130,12 +135,12 @@ const Dashboard = () => {
           team_earnings: Number(store.team_earnings || 0),
         });
 
-        // Check if balance < pack price AND renewal not handled yet
-        const renewalAlreadyHandled = store.renewal_handled === true;
-        renewalSentRef.current = renewalAlreadyHandled;
-        renewalDoneRef.current = renewalAlreadyHandled;
-        setRenewalDone(renewalAlreadyHandled);
-        if (totalTopup > 0 && dbBalance < packPrice && !renewalAlreadyHandled) {
+        // Show renewal dialog ONLY if:
+        // 1. Has topup
+        // 2. Balance < pack price
+        // 3. renewal_handled is FALSE in DB
+        if (totalTopup > 0 && dbBalance < packPrice && !isRenewalBlocked) {
+          renewalShownRef.current = true;
           setShowRenewalDialog(true);
         }
       }
@@ -149,7 +154,9 @@ const Dashboard = () => {
       const level = storeDataRef.current.store_level;
       const topup = storeDataRef.current.total_topup;
       const packPrice = PACK_PRICE[level] || 92;
-      if (topup <= 0 || liveBalanceRef.current < packPrice || renewalHandled === false && showRenewalDialog) return;
+
+      // Stop if: no topup, balance low, renewal blocked, or dialog showing
+      if (topup <= 0 || liveBalanceRef.current < packPrice || renewalBlockedRef.current || renewalShownRef.current) return;
 
       const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
       const newProfit = liveProfitRef.current + perSecond;
@@ -159,9 +166,9 @@ const Dashboard = () => {
       setLiveProfit(newProfit);
       setLiveBalance(newBalance);
 
-      // Check if balance dropped below pack price — only show once
-      if (newBalance < packPrice && !renewalSentRef.current && !renewalDoneRef.current) {
-        renewalSentRef.current = true;
+      // Show renewal dialog once when balance drops below pack price
+      if (newBalance < packPrice && !renewalShownRef.current && !renewalBlockedRef.current) {
+        renewalShownRef.current = true;
         setShowRenewalDialog(true);
       }
     }, 1000);
@@ -177,56 +184,41 @@ const Dashboard = () => {
     }, 10000);
 
     return () => { clearInterval(interval); clearInterval(saveInterval); };
-  }, [showRenewalDialog, renewalHandled]);
+  }, []);
 
   const handleRenewalAccept = async () => {
     const level = storeDataRef.current.store_level;
     const packPrice = PACK_PRICE[level] || 92;
-
-    // Deduct pack price from balance
     const newBalance = liveBalanceRef.current - packPrice;
     liveBalanceRef.current = newBalance;
     setLiveBalance(newBalance);
 
     await supabase.from("user_stores").update({
       balance: newBalance,
-      last_profit_update: new Date().toISOString(),
       renewal_handled: false,
+      last_profit_update: new Date().toISOString(),
     }).eq("user_id", userIdRef.current);
 
-    // Send notification
-    await supabase.from("notifications").insert({
-      user_id: userIdRef.current,
-      message: `✅ تم تجديد باقة ${level} بنجاح — تم خصم $${packPrice}`,
-      type: "success",
-    });
-
+    renewalBlockedRef.current = false;
+    renewalShownRef.current = false;
     toast.success(`✅ تم تجديد الباقة! تم خصم $${packPrice}`);
     setShowRenewalDialog(false);
-    setRenewalHandled(true);
-    renewalSentRef.current = false;
   };
 
   const handleRenewalReject = async () => {
     const level = storeDataRef.current.store_level;
 
-    await supabase.from("notifications").insert({
-      user_id: userIdRef.current,
-      message: `⚠️ تم إيقاف باقة ${level} — الربح موقوف حتى تشحن رصيداً كافياً`,
-      type: "warning",
-    });
-
-    // Mark renewal as handled so it won't show again
+    // Save renewal_handled = true in DB FIRST
     await supabase.from("user_stores").update({
       renewal_handled: true,
     }).eq("user_id", userIdRef.current);
 
+    // Block permanently
+    renewalBlockedRef.current = true;
+    renewalShownRef.current = true;
+
     toast.error("تم إيقاف الباقة — الربح موقوف");
     setShowRenewalDialog(false);
-    setRenewalHandled(false);
-    renewalSentRef.current = true;
-    renewalDoneRef.current = true;
-    setRenewalDone(true);
   };
 
   const handleLogout = async () => {
@@ -278,7 +270,7 @@ const Dashboard = () => {
     { label: isAr ? "تحميل" : "Download", icon: Download },
   ];
 
-  const packActive = storeData.total_topup > 0 && liveBalance >= (PACK_PRICE[storeData.store_level] || 92) && !showRenewalDialog;
+  const packActive = storeData.total_topup > 0 && liveBalance >= (PACK_PRICE[storeData.store_level] || 92) && !renewalBlockedRef.current;
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -296,7 +288,6 @@ const Dashboard = () => {
                 <p className="text-sm text-muted-foreground">{isAr ? "رصيدك أقل من سعر الباقة" : "Balance below pack price"}</p>
               </div>
             </div>
-
             <div className="bg-orange-50 rounded-xl p-4">
               <p className="text-sm text-orange-700 font-medium">
                 {isAr
@@ -304,27 +295,15 @@ const Dashboard = () => {
                   : `Your pack (${storeData.store_level}) needs $${PACK_PRICE[storeData.store_level] || 92} to continue. Do you approve the renewal?`}
               </p>
             </div>
-
             <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={handleRenewalReject}
-                className="py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50"
-              >
+              <button onClick={handleRenewalReject} className="py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50">
                 ❌ {isAr ? "لا، أوقف" : "No, Stop"}
               </button>
-              <button
-                onClick={handleRenewalAccept}
-                className="py-3 rounded-xl bg-green-600 text-white font-bold text-sm hover:bg-green-700"
-              >
+              <button onClick={handleRenewalAccept} className="py-3 rounded-xl bg-green-600 text-white font-bold text-sm hover:bg-green-700">
                 ✅ {isAr ? "نعم، جدد" : "Yes, Renew"}
               </button>
             </div>
-
-            <Link
-              to="/topup"
-              className="block text-center text-sm text-primary font-medium hover:underline"
-              onClick={() => setShowRenewalDialog(false)}
-            >
+            <Link to="/topup" className="block text-center text-sm text-primary font-medium hover:underline" onClick={() => setShowRenewalDialog(false)}>
               {isAr ? "اشحن رصيداً أولاً →" : "Top up first →"}
             </Link>
           </div>
@@ -376,7 +355,7 @@ const Dashboard = () => {
               <p className="text-xs text-muted-foreground">{isAr ? "رصيد المتجر" : "My Store Credit"}</p>
               <p className="text-3xl font-bold text-foreground tabular-nums">{liveBalance.toFixed(6)} USDT</p>
               {packActive && <p className="text-xs text-green-500 mt-1">📈 {isAr ? "الربح يتزاد الآن" : "Earning now..."}</p>}
-              {showRenewalDialog && <p className="text-xs text-orange-500 mt-1">⚠️ {isAr ? "الربح موقوف مؤقتاً" : "Earning paused"}</p>}
+              {renewalBlockedRef.current && <p className="text-xs text-red-500 mt-1">⛔ {isAr ? "الباقة موقوفة" : "Pack stopped"}</p>}
             </div>
           </CardContent>
         </Card>
@@ -445,12 +424,12 @@ const Dashboard = () => {
                   <p className="text-xs text-green-500 mt-1">✅ {isAr ? "الباقة نشطة" : "Pack is active"}</p>
                 </div>
               ) : (
-                <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
-                  <p className="text-xs text-orange-600 font-bold">
-                    ⚠️ {isAr ? "الباقة موقوفة" : "Pack is stopped"}
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+                  <p className="text-xs text-red-600 font-bold">
+                    ⛔ {isAr ? "الباقة موقوفة — الربح متوقف" : "Pack stopped — earning paused"}
                   </p>
-                  <Link to="/topup" className="inline-block mt-2 bg-orange-500 text-white text-xs font-bold px-4 py-1.5 rounded-full">
-                    {isAr ? "أكمل الشحن" : "Top up now"} →
+                  <Link to="/topup" className="inline-block mt-2 bg-red-500 text-white text-xs font-bold px-4 py-1.5 rounded-full">
+                    {isAr ? "اشحن لإعادة التفعيل" : "Top up to reactivate"} →
                   </Link>
                 </div>
               )

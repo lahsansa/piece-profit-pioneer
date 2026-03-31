@@ -8,11 +8,20 @@ import {
   Wallet, ArrowDownToLine, CreditCard, UserCog,
   Globe, Landmark, Download, Search, User, Shield, LogOut, Copy, Check,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 const generateReferralCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
+
+// Profit per second for each store level (max daily / 86400)
+const PROFIT_PER_SECOND: Record<string, number> = {
+  "Small shop":   11.5   / 86400,  // $0.000133/s
+  "Medium shop":  39     / 86400,  // $0.000451/s
+  "Large shop":   92     / 86400,  // $0.001065/s
+  "Mega shop":    135    / 86400,  // $0.001563/s
+  "VIP":          220    / 86400,  // $0.002546/s
+};
 
 const Dashboard = () => {
   const { lang } = useLang();
@@ -32,23 +41,26 @@ const Dashboard = () => {
     total_profit: 0,
     team_earnings: 0,
   });
+  const [liveProfit, setLiveProfit] = useState(0);
+  const lastSaveRef = useRef<Date>(new Date());
+  const storeDataRef = useRef(storeData);
+  const userIdRef = useRef("");
+
+  useEffect(() => { storeDataRef.current = storeData; }, [storeData]);
 
   useEffect(() => {
     const loadUserData = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { navigate("/login"); return; }
-
+      userIdRef.current = user.id;
       setUserEmail(user.email || "");
       setUserId(user.id.slice(0, 8).toUpperCase());
 
-      // Check admin
       const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
       if (roles && roles.some((r: any) => r.role === "admin")) setIsAdmin(true);
 
-      // Load store data
       let { data: store } = await supabase.from("user_stores").select("*").eq("user_id", user.id).maybeSingle();
 
-      // If no store, create one with referral code
       if (!store) {
         const newCode = generateReferralCode();
         const { data: newStore } = await supabase.from("user_stores").insert({
@@ -59,11 +71,11 @@ const Dashboard = () => {
           total_topup: 0,
           total_profit: 0,
           team_earnings: 0,
+          last_profit_update: new Date().toISOString(),
         }).select().single();
         store = newStore;
       }
 
-      // If store exists but no referral code, generate one
       if (store && !store.referral_code) {
         const newCode = generateReferralCode();
         await supabase.from("user_stores").update({ referral_code: newCode }).eq("user_id", user.id);
@@ -72,6 +84,8 @@ const Dashboard = () => {
 
       if (store) {
         setReferralCode(store.referral_code || "");
+        setLiveProfit(Number(store.total_profit));
+        lastSaveRef.current = new Date(store.last_profit_update || new Date());
         setStoreData({
           store_level: store.store_level,
           balance: Number(store.balance),
@@ -84,7 +98,46 @@ const Dashboard = () => {
     loadUserData();
   }, [navigate]);
 
+  // Real-time profit ticker — updates every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const level = storeDataRef.current.store_level;
+      const topup = storeDataRef.current.total_topup;
+      
+      // Only earn profit if user has topped up
+      if (topup <= 0) return;
+
+      const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
+      
+      setLiveProfit(prev => {
+        const newProfit = prev + perSecond;
+
+        // Save to database every hour
+        const now = new Date();
+        const secondsSinceLastSave = (now.getTime() - lastSaveRef.current.getTime()) / 1000;
+        if (secondsSinceLastSave >= 3600 && userIdRef.current) {
+          lastSaveRef.current = now;
+          supabase.from("user_stores").update({
+            total_profit: newProfit,
+            last_profit_update: now.toISOString(),
+          }).eq("user_id", userIdRef.current);
+        }
+
+        return newProfit;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   const handleLogout = async () => {
+    // Save profit before logout
+    if (userIdRef.current && storeDataRef.current.total_topup > 0) {
+      await supabase.from("user_stores").update({
+        total_profit: liveProfit,
+        last_profit_update: new Date().toISOString(),
+      }).eq("user_id", userIdRef.current);
+    }
     await supabase.auth.signOut();
     navigate("/login");
   };
@@ -120,12 +173,6 @@ const Dashboard = () => {
     { label: isAr ? "حسابي" : "Account", icon: UserCog, color: "text-purple-500", bg: "bg-purple-500/10", to: null },
   ];
 
-  const storeStats = [
-    { label: isAr ? "إجمالي الشحن" : "Total Topup", value: storeData.total_topup.toFixed(2) },
-    { label: isAr ? "إجمالي الأرباح" : "Total Profit", value: storeData.total_profit.toFixed(2) },
-    { label: isAr ? "أرباح الفريق" : "Team Earnings", value: storeData.team_earnings.toFixed(2) },
-  ];
-
   const bottomLinks = [
     { label: isAr ? "الموقع الرسمي" : "Official Website", icon: Globe },
     { label: isAr ? "قرض" : "Loan", icon: Landmark },
@@ -134,7 +181,6 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      {/* Header */}
       <div className="bg-primary text-primary-foreground px-4 py-3 pt-16 text-center flex items-center justify-between">
         <p className="text-sm font-medium flex-1 text-center">
           {isAr ? "مستوى المتجر" : "Position"}:{" "}
@@ -146,15 +192,12 @@ const Dashboard = () => {
       </div>
 
       <div className="max-w-md mx-auto px-4 py-5 space-y-5">
-        {/* Admin link */}
         {isAdmin && (
           <Link to="/admin">
             <Card className="shadow-md border-0 bg-destructive/10 cursor-pointer hover:bg-destructive/20 transition-colors">
               <CardContent className="p-4 flex items-center gap-3">
                 <Shield className="w-5 h-5 text-destructive" />
-                <span className="text-sm font-bold text-destructive">
-                  {isAr ? "لوحة تحكم المشرف" : "Go to Admin Dashboard"}
-                </span>
+                <span className="text-sm font-bold text-destructive">{isAr ? "لوحة تحكم المشرف" : "Go to Admin Dashboard"}</span>
               </CardContent>
             </Card>
           </Link>
@@ -221,24 +264,44 @@ const Dashboard = () => {
                 <span className="text-xs font-medium text-foreground text-center leading-tight">{action.label}</span>
               </div>
             );
-            return action.to ? (
-              <Link key={action.label} to={action.to}>{content}</Link>
-            ) : (
-              <div key={action.label}>{content}</div>
-            );
+            return action.to ? <Link key={action.label} to={action.to}>{content}</Link> : <div key={action.label}>{content}</div>;
           })}
         </div>
 
-        {/* Store data */}
+        {/* Store data with live profit */}
         <Card className="shadow-md border-0">
           <CardContent className="p-4 space-y-3">
             <h3 className="text-sm font-bold text-foreground">{isAr ? "بيانات المتجر" : "Store Data"}</h3>
-            {storeStats.map((stat) => (
-              <div key={stat.label} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
-                <span className="text-sm text-muted-foreground">{stat.label}</span>
-                <span className="text-sm font-bold text-foreground">{stat.value}</span>
+
+            <div className="flex items-center justify-between py-2 border-b border-border/50">
+              <span className="text-sm text-muted-foreground">{isAr ? "إجمالي الشحن" : "Total Topup"}</span>
+              <span className="text-sm font-bold text-foreground">{storeData.total_topup.toFixed(2)}</span>
+            </div>
+
+            {/* Live profit counter */}
+            <div className="flex items-center justify-between py-2 border-b border-border/50">
+              <span className="text-sm text-muted-foreground">{isAr ? "إجمالي الأرباح" : "Total Profit"}</span>
+              <span className="text-sm font-bold text-green-500 tabular-nums">
+                {storeData.total_topup > 0 ? liveProfit.toFixed(6) : "0.000000"}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between py-2">
+              <span className="text-sm text-muted-foreground">{isAr ? "أرباح الفريق" : "Team Earnings"}</span>
+              <span className="text-sm font-bold text-foreground">{storeData.team_earnings.toFixed(2)}</span>
+            </div>
+
+            {/* Daily rate info */}
+            {storeData.total_topup > 0 && (
+              <div className="bg-green-50 rounded-xl p-3 text-center">
+                <p className="text-xs text-green-600 font-medium">
+                  📈 {isAr ? "معدل الربح اليومي" : "Daily profit rate"}: 
+                  <span className="font-bold mr-1">
+                    ~${((PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400).toFixed(2)}/day
+                  </span>
+                </p>
               </div>
-            ))}
+            )}
           </CardContent>
         </Card>
 

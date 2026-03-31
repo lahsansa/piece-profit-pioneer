@@ -19,6 +19,10 @@ import Team from "@/pages/Team";
 import Orders from "@/pages/Orders";
 import TopupBalance from "@/pages/TopupBalance";
 import Admin from "@/pages/Admin";
+import Withdraw from "@/pages/Withdraw";
+import Withdraw from "@/pages/Withdraw";
+
+
 
 const queryClient = new QueryClient();
 
@@ -44,6 +48,8 @@ const App = () => (
             <Route path="/topup" element={<TopupBalance />} />
             <Route path="/admin" element={<Admin />} />
             <Route path="*" element={<NotFound />} />
+            <Route path="/withdraw" element={<Withdraw />} />
+
           </Routes>
           <BottomNav />
         </BrowserRouter>

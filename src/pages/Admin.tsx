@@ -110,17 +110,19 @@ const Admin = () => {
       if (error) throw error;
       const { data: store } = await supabase.from("user_stores").select("balance, total_topup, referred_by").eq("user_id", selectedTopup.user_id).single();
       if (store) {
-        await supabase.from("user_stores").update({ balance: Number(store.balance) + amount, total_topup: Number(store.total_topup) + amount }).eq("user_id", selectedTopup.user_id);
+        const bonus = Math.round(amount * 0.05 * 100) / 100;
+        const totalCredit = amount + bonus;
+        await supabase.from("user_stores").update({ balance: Number(store.balance) + totalCredit, total_topup: Number(store.total_topup) + amount }).eq("user_id", selectedTopup.user_id);
         if (store.referred_by) {
           const { data: referrer } = await supabase.from("user_stores").select("balance, team_earnings").eq("referral_code", store.referred_by).single();
           if (referrer) {
             await supabase.from("user_stores").update({ balance: Number(referrer.balance) + REFERRAL_COMMISSION, team_earnings: Number(referrer.team_earnings || 0) + REFERRAL_COMMISSION }).eq("referral_code", store.referred_by);
-            toast.success(`✅ تمت الموافقة — ${amount} USDT + $${REFERRAL_COMMISSION} عمولة للمحيل 🎁`);
-          } else { toast.success(`✅ تمت الموافقة — ${amount} USDT`); }
-        } else { toast.success(`✅ تمت الموافقة — ${amount} USDT`); }
+            toast.success(`✅ تمت الموافقة — ${amount} USDT + ${bonus} bonus (5%) 🎁 + $${REFERRAL_COMMISSION} للمحيل`);
+          } else { toast.success(`✅ تمت الموافقة — ${amount} USDT + ${bonus} bonus (5%) 🎁`); }
+        } else { toast.success(`✅ تمت الموافقة — ${amount} USDT + ${bonus} bonus (5%) 🎁`); }
       } else {
         await supabase.from("user_stores").insert({ user_id: selectedTopup.user_id, balance: amount, total_topup: amount });
-        toast.success(`✅ تمت الموافقة — ${amount} USDT`);
+        toast.success(`✅ تمت الموافقة — ${amount} USDT + ${bonus} bonus (5%) 🎁`);
       }
       setApproveDialogOpen(false);
       await loadAll();

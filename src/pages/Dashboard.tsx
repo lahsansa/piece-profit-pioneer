@@ -137,9 +137,11 @@ const Dashboard = () => {
 
         // Show renewal dialog ONLY if:
         // 1. Has topup
-        // 2. Balance < pack price
+        // 2. Balance < pack price  
         // 3. renewal_handled is FALSE in DB
-        if (totalTopup > 0 && dbBalance < packPrice && !isRenewalBlocked) {
+        // 4. Not already closed this session
+        const closedThisSession = sessionStorage.getItem(`renewal_closed_${user.id}`) === "true";
+        if (totalTopup > 0 && dbBalance < packPrice && !isRenewalBlocked && !closedThisSession) {
           renewalShownRef.current = true;
           setShowRenewalDialog(true);
         }
@@ -191,7 +193,8 @@ const Dashboard = () => {
   };
 
   const handleRenewalReject = () => {
-    // Just close the dialog — stop earning, never show again this session
+    // Save in sessionStorage so it persists across refreshes in same tab
+    sessionStorage.setItem(`renewal_closed_${userIdRef.current}`, "true");
     renewalBlockedRef.current = true;
     renewalShownRef.current = true;
     setShowRenewalDialog(false);

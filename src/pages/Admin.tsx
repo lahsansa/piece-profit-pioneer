@@ -6,33 +6,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Shield, CheckCircle, XCircle, Lock, Plus, Minus, Edit } from "lucide-react";
+import { Shield, CheckCircle, XCircle, Lock, Plus, Minus, Edit, Users } from "lucide-react";
 import { toast } from "sonner";
 
 const ADMIN_USERNAME = "hassan";
 const ADMIN_PASSWORD = "hassan";
-
 const STORE_LEVELS = ["Small shop", "Medium shop", "Large shop", "Mega shop", "VIP"];
 
 interface UserStore {
@@ -41,6 +27,12 @@ interface UserStore {
   balance: number;
   total_topup: number;
   total_profit: number;
+  referral_code: string;
+  referred_by: string;
+  // computed
+  referral_count?: number;
+  paid_referrals?: number;
+  referrals_total_topup?: number;
 }
 
 interface Topup {
@@ -63,27 +55,27 @@ const Admin = () => {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"topups" | "users">("topups");
 
-  // Approve with editable amount
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [selectedTopup, setSelectedTopup] = useState<Topup | null>(null);
   const [editedAmount, setEditedAmount] = useState("");
 
-  // Balance edit dialog
   const [balanceDialogOpen, setBalanceDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserStore | null>(null);
   const [balanceAmount, setBalanceAmount] = useState("");
   const [balanceAction, setBalanceAction] = useState<"add" | "subtract">("add");
 
-  // Level edit dialog
   const [levelDialogOpen, setLevelDialogOpen] = useState(false);
   const [selectedLevel, setSelectedLevel] = useState("");
 
-  // Manual topup dialog
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [manualAmount, setManualAmount] = useState("");
   const [manualTxid, setManualTxid] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const [referralDialogOpen, setReferralDialogOpen] = useState(false);
+  const [selectedUserReferrals, setSelectedUserReferrals] = useState<UserStore[]>([]);
+  const [selectedUserName, setSelectedUserName] = useState("");
 
   const approvingRef = useRef<Set<string>>(new Set());
 
@@ -104,14 +96,31 @@ const Admin = () => {
   };
 
   const loadUsers = async () => {
-    const { data } = await supabase.from("user_stores").select("*");
-    if (data) setUsers(data.map((u: any) => ({
-      user_id: u.user_id,
-      store_level: u.store_level,
-      balance: Number(u.balance),
-      total_topup: Number(u.total_topup),
-      total_profit: Number(u.total_profit),
-    })));
+    const { data: allUsers } = await supabase.from("user_stores").select("*");
+    if (!allUsers) return;
+
+    // For each user, compute referral stats
+    const usersWithStats = allUsers.map((u: any) => {
+      const myCode = u.referral_code;
+      const referrals = allUsers.filter((r: any) => r.referred_by === myCode);
+      const paidReferrals = referrals.filter((r: any) => Number(r.total_topup) > 0);
+      const referralsTotalTopup = referrals.reduce((sum: number, r: any) => sum + Number(r.total_topup), 0);
+
+      return {
+        user_id: u.user_id,
+        store_level: u.store_level,
+        balance: Number(u.balance),
+        total_topup: Number(u.total_topup),
+        total_profit: Number(u.total_profit),
+        referral_code: u.referral_code || "",
+        referred_by: u.referred_by || "",
+        referral_count: referrals.length,
+        paid_referrals: paidReferrals.length,
+        referrals_total_topup: referralsTotalTopup,
+      };
+    });
+
+    setUsers(usersWithStats);
   };
 
   const loadTopups = async () => {
@@ -119,7 +128,13 @@ const Admin = () => {
     if (data) setTopups(data as Topup[]);
   };
 
-  // Open approve dialog with editable amount
+  const openReferralDialog = (user: UserStore) => {
+    const allReferrals = users.filter(u => u.referred_by === user.referral_code);
+    setSelectedUserReferrals(allReferrals);
+    setSelectedUserName(user.user_id.slice(0, 8).toUpperCase());
+    setReferralDialogOpen(true);
+  };
+
   const openApproveDialog = (topup: Topup) => {
     setSelectedTopup(topup);
     setEditedAmount(String(topup.amount_usdt));
@@ -133,16 +148,10 @@ const Admin = () => {
     if (approvingRef.current.has(selectedTopup.id)) return;
     approvingRef.current.add(selectedTopup.id);
     setSubmitting(true);
-
     try {
       const { data: store } = await supabase.from("user_stores").select("balance, total_topup").eq("user_id", selectedTopup.user_id).single();
-
-      const { error } = await supabase.from("topups")
-        .update({ status: "confirmed", amount_usdt: amount })
-        .eq("id", selectedTopup.id)
-        .eq("status", "pending");
+      const { error } = await supabase.from("topups").update({ status: "confirmed", amount_usdt: amount }).eq("id", selectedTopup.id).eq("status", "pending");
       if (error) throw error;
-
       if (store) {
         await supabase.from("user_stores").update({
           balance: Number(store.balance) + amount,
@@ -151,7 +160,6 @@ const Admin = () => {
       } else {
         await supabase.from("user_stores").insert({ user_id: selectedTopup.user_id, balance: amount, total_topup: amount });
       }
-
       toast.success(`✅ تمت الموافقة — تم إضافة ${amount} USDT`);
       setApproveDialogOpen(false);
       await loadAll();
@@ -171,7 +179,6 @@ const Admin = () => {
     } catch (err: any) { toast.error(err.message || "حدث خطأ"); }
   };
 
-  // Balance add/subtract
   const openBalanceDialog = (user: UserStore, action: "add" | "subtract") => {
     setSelectedUser(user);
     setBalanceAction(action);
@@ -182,10 +189,7 @@ const Admin = () => {
   const handleBalanceUpdate = async () => {
     if (!selectedUser || !balanceAmount || Number(balanceAmount) <= 0) { toast.error("أدخل مبلغ صحيح"); return; }
     const amount = Number(balanceAmount);
-    const newBalance = balanceAction === "add"
-      ? selectedUser.balance + amount
-      : Math.max(0, selectedUser.balance - amount);
-
+    const newBalance = balanceAction === "add" ? selectedUser.balance + amount : Math.max(0, selectedUser.balance - amount);
     try {
       await supabase.from("user_stores").update({ balance: newBalance }).eq("user_id", selectedUser.user_id);
       toast.success(balanceAction === "add" ? `✅ تمت إضافة ${amount} $` : `✅ تم خصم ${amount} $`);
@@ -194,7 +198,6 @@ const Admin = () => {
     } catch (err: any) { toast.error(err.message || "حدث خطأ"); }
   };
 
-  // Store level edit
   const openLevelDialog = (user: UserStore) => {
     setSelectedUser(user);
     setSelectedLevel(user.store_level);
@@ -286,7 +289,7 @@ const Admin = () => {
             طلبات الشحن {pendingTopups.length > 0 && <Badge className="mr-2 bg-red-500">{pendingTopups.length}</Badge>}
           </Button>
           <Button variant={activeTab === "users" ? "default" : "outline"} onClick={() => setActiveTab("users")}>
-            المستخدمون
+            المستخدمون ({users.length})
           </Button>
         </div>
 
@@ -310,7 +313,7 @@ const Admin = () => {
                         <div className="md:w-1/2 flex flex-col justify-between gap-4">
                           <div className="space-y-3">
                             <div className="flex justify-between items-center">
-                              <span className="text-muted-foreground text-sm">المبلغ المطلوب:</span>
+                              <span className="text-muted-foreground text-sm">المبلغ:</span>
                               <span className="font-bold text-green-500 text-2xl">{t.amount_usdt} USDT</span>
                             </div>
                             <div className="flex justify-between items-center">
@@ -391,9 +394,11 @@ const Admin = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Account ID</TableHead>
+                    <TableHead>رمز الدعوة</TableHead>
                     <TableHead>مستوى المتجر</TableHead>
                     <TableHead>الرصيد</TableHead>
-                    <TableHead>إجمالي الشحن</TableHead>
+                    <TableHead>الإجمالي</TableHead>
+                    <TableHead>الرفيرالز</TableHead>
                     <TableHead>إجراءات</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -401,16 +406,30 @@ const Admin = () => {
                   {users.map((u) => (
                     <TableRow key={u.user_id}>
                       <TableCell className="font-mono text-sm font-bold">{u.user_id.slice(0, 8).toUpperCase()}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{u.referral_code || "—"}</TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-2">
-                          <span>{u.store_level}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs">{u.store_level}</span>
                           <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => openLevelDialog(u)}>
                             <Edit className="w-3 h-3" />
                           </Button>
                         </div>
                       </TableCell>
                       <TableCell className="font-bold text-green-500">{u.balance} $</TableCell>
-                      <TableCell>{u.total_topup} $</TableCell>
+                      <TableCell className="text-sm">{u.total_topup} $</TableCell>
+                      <TableCell>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() => openReferralDialog(u)}
+                        >
+                          <Users className="w-3 h-3" />
+                          <span className="text-blue-500 font-bold">{u.referral_count}</span>
+                          <span className="text-muted-foreground">|</span>
+                          <span className="text-green-500 font-bold">{u.paid_referrals} خلصو</span>
+                        </Button>
+                      </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
                           <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white h-8 px-2" onClick={() => openBalanceDialog(u, "add")}>
@@ -433,7 +452,65 @@ const Admin = () => {
         )}
       </div>
 
-      {/* Approve Dialog with editable amount */}
+      {/* Referral Details Dialog */}
+      <Dialog open={referralDialogOpen} onOpenChange={setReferralDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>رفيرالز {selectedUserName}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {selectedUserReferrals.length === 0 ? (
+              <p className="text-center text-muted-foreground py-4">لا يوجد رفيرالز بعد</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  <div className="bg-muted rounded-xl p-3 text-center">
+                    <p className="text-xs text-muted-foreground">إجمالي</p>
+                    <p className="text-xl font-bold">{selectedUserReferrals.length}</p>
+                  </div>
+                  <div className="bg-green-50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-muted-foreground">خلصو</p>
+                    <p className="text-xl font-bold text-green-600">{selectedUserReferrals.filter(r => r.total_topup > 0).length}</p>
+                  </div>
+                  <div className="bg-blue-50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-muted-foreground">إجمالي الشحن</p>
+                    <p className="text-lg font-bold text-blue-600">{selectedUserReferrals.reduce((s, r) => s + r.total_topup, 0)} $</p>
+                  </div>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account ID</TableHead>
+                      <TableHead>المستوى</TableHead>
+                      <TableHead>إجمالي الشحن</TableHead>
+                      <TableHead>الحالة</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {selectedUserReferrals.map((r) => (
+                      <TableRow key={r.user_id}>
+                        <TableCell className="font-mono text-xs font-bold">{r.user_id.slice(0, 8).toUpperCase()}</TableCell>
+                        <TableCell className="text-xs">{r.store_level}</TableCell>
+                        <TableCell className="font-bold text-sm">{r.total_topup} $</TableCell>
+                        <TableCell>
+                          <Badge variant={r.total_topup > 0 ? "default" : "secondary"}>
+                            {r.total_topup > 0 ? "✅ نشط" : "⏳ لم يخلص"}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReferralDialogOpen(false)}>إغلاق</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Approve Dialog */}
       <Dialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>تأكيد الموافقة</DialogTitle></DialogHeader>
@@ -463,9 +540,7 @@ const Admin = () => {
             <DialogTitle>{balanceAction === "add" ? "➕ إضافة رصيد" : "➖ خصم رصيد"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <p className="text-sm text-muted-foreground">
-              الرصيد الحالي: <span className="font-bold text-green-500">{selectedUser?.balance} $</span>
-            </p>
+            <p className="text-sm text-muted-foreground">الرصيد الحالي: <span className="font-bold text-green-500">{selectedUser?.balance} $</span></p>
             <div>
               <Label>المبلغ ($)</Label>
               <Input type="number" placeholder="مثال: 50" value={balanceAmount} onChange={e => setBalanceAmount(e.target.value)} />

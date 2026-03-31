@@ -5,20 +5,14 @@ import { Input } from "@/components/ui/input";
 import { useLang } from "@/hooks/use-lang";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  Wallet,
-  ArrowDownToLine,
-  CreditCard,
-  UserCog,
-  Globe,
-  Landmark,
-  Download,
-  Search,
-  User,
-  Shield,
-  LogOut,
+  Wallet, ArrowDownToLine, CreditCard, UserCog,
+  Globe, Landmark, Download, Search, User, Shield, LogOut, Copy, Check,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+
+const generateReferralCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
 
 const Dashboard = () => {
   const { lang } = useLang();
@@ -28,44 +22,62 @@ const Dashboard = () => {
   const [userEmail, setUserEmail] = useState("");
   const [userId, setUserId] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [referralCode, setReferralCode] = useState("");
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [storeData, setStoreData] = useState({
     store_level: "Small shop",
     balance: 0,
     total_topup: 0,
     total_profit: 0,
+    team_earnings: 0,
   });
 
   useEffect(() => {
     const loadUserData = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        navigate("/login");
-        return;
-      }
+      if (!user) { navigate("/login"); return; }
+
       setUserEmail(user.email || "");
       setUserId(user.id.slice(0, 8).toUpperCase());
 
-      // Check admin role
-      const { data: roles } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", user.id);
-      if (roles && roles.some((r: any) => r.role === "admin")) {
-        setIsAdmin(true);
-      }
+      // Check admin
+      const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
+      if (roles && roles.some((r: any) => r.role === "admin")) setIsAdmin(true);
 
       // Load store data
-      const { data: store } = await supabase
-        .from("user_stores")
-        .select("*")
-        .eq("user_id", user.id)
-        .maybeSingle();
+      let { data: store } = await supabase.from("user_stores").select("*").eq("user_id", user.id).maybeSingle();
+
+      // If no store, create one with referral code
+      if (!store) {
+        const newCode = generateReferralCode();
+        const { data: newStore } = await supabase.from("user_stores").insert({
+          user_id: user.id,
+          referral_code: newCode,
+          store_level: "Small shop",
+          balance: 0,
+          total_topup: 0,
+          total_profit: 0,
+          team_earnings: 0,
+        }).select().single();
+        store = newStore;
+      }
+
+      // If store exists but no referral code, generate one
+      if (store && !store.referral_code) {
+        const newCode = generateReferralCode();
+        await supabase.from("user_stores").update({ referral_code: newCode }).eq("user_id", user.id);
+        store.referral_code = newCode;
+      }
+
       if (store) {
+        setReferralCode(store.referral_code || "");
         setStoreData({
           store_level: store.store_level,
           balance: Number(store.balance),
           total_topup: Number(store.total_topup),
           total_profit: Number(store.total_profit),
+          team_earnings: Number(store.team_earnings || 0),
         });
       }
     };
@@ -77,10 +89,28 @@ const Dashboard = () => {
     navigate("/login");
   };
 
+  const referralLink = `${window.location.origin}/login?ref=${referralCode}`;
+
+  const copyCode = () => {
+    navigator.clipboard.writeText(referralCode);
+    setCopiedCode(true);
+    toast.success("تم نسخ رمز الدعوة!");
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(referralLink);
+    setCopiedLink(true);
+    toast.success("تم نسخ رابط الدعوة!");
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
+
   const storeLevelAr: Record<string, string> = {
     "Small shop": "متجر صغير",
     "Medium shop": "متجر متوسط",
     "Large shop": "متجر كبير",
+    "Mega shop": "متجر ميغا",
+    "VIP": "VIP",
   };
 
   const quickActions = [
@@ -93,6 +123,7 @@ const Dashboard = () => {
   const storeStats = [
     { label: isAr ? "إجمالي الشحن" : "Total Topup", value: storeData.total_topup.toFixed(2) },
     { label: isAr ? "إجمالي الأرباح" : "Total Profit", value: storeData.total_profit.toFixed(2) },
+    { label: isAr ? "أرباح الفريق" : "Team Earnings", value: storeData.team_earnings.toFixed(2) },
   ];
 
   const bottomLinks = [
@@ -103,7 +134,7 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
-      {/* Header bar */}
+      {/* Header */}
       <div className="bg-primary text-primary-foreground px-4 py-3 pt-16 text-center flex items-center justify-between">
         <p className="text-sm font-medium flex-1 text-center">
           {isAr ? "مستوى المتجر" : "Position"}:{" "}
@@ -156,6 +187,29 @@ const Dashboard = () => {
           </CardContent>
         </Card>
 
+        {/* Referral Card */}
+        {referralCode && (
+          <Card className="shadow-md border-0 bg-primary text-primary-foreground">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm opacity-80">{isAr ? "رمز الدعوة" : "Referral Code"}</span>
+                <span className="text-xl font-bold tracking-widest font-mono">{referralCode}</span>
+                <Button size="sm" variant="secondary" onClick={copyCode} className="h-8 px-3">
+                  {copiedCode ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span className="mr-1 text-xs">{isAr ? "نسخ" : "Copy"}</span>
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs opacity-70 truncate flex-1">{referralLink}</span>
+                <Button size="sm" variant="secondary" onClick={copyLink} className="h-8 px-3 flex-shrink-0">
+                  {copiedLink ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span className="mr-1 text-xs">{isAr ? "نسخ" : "Copy"}</span>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Quick actions */}
         <div className="grid grid-cols-4 gap-3">
           {quickActions.map((action) => {
@@ -192,12 +246,7 @@ const Dashboard = () => {
         <Card className="shadow-md border-0">
           <CardContent className="p-4">
             <div className="flex gap-2">
-              <Input
-                type="date"
-                value={searchDate}
-                onChange={(e) => setSearchDate(e.target.value)}
-                className="flex-1"
-              />
+              <Input type="date" value={searchDate} onChange={(e) => setSearchDate(e.target.value)} className="flex-1" />
               <Button size="sm" className="bg-primary text-primary-foreground px-4">
                 <Search className="w-4 h-4 mr-1" />
                 {isAr ? "بحث" : "Search"}

@@ -52,6 +52,8 @@ const Dashboard = () => {
   const [liveBalance, setLiveBalance] = useState(0);
   const [showRenewalDialog, setShowRenewalDialog] = useState(false);
   const [renewalHandled, setRenewalHandled] = useState(false);
+  const [renewalDone, setRenewalDone] = useState(false);
+  const renewalDoneRef = useRef(false);
   const storeDataRef = useRef(storeData);
   const liveProfitRef = useRef(0);
   const liveBalanceRef = useRef(0);
@@ -131,6 +133,8 @@ const Dashboard = () => {
         // Check if balance < pack price AND renewal not handled yet
         const renewalAlreadyHandled = store.renewal_handled === true;
         renewalSentRef.current = renewalAlreadyHandled;
+        renewalDoneRef.current = renewalAlreadyHandled;
+        setRenewalDone(renewalAlreadyHandled);
         if (totalTopup > 0 && dbBalance < packPrice && !renewalAlreadyHandled) {
           setShowRenewalDialog(true);
         }
@@ -156,12 +160,8 @@ const Dashboard = () => {
       setLiveBalance(newBalance);
 
       // Check if balance dropped below pack price — only show once
-      if (newBalance < packPrice && !renewalSentRef.current) {
+      if (newBalance < packPrice && !renewalSentRef.current && !renewalDoneRef.current) {
         renewalSentRef.current = true;
-        // Save to DB that renewal is needed
-        supabase.from("user_stores").update({
-          renewal_handled: false,
-        }).eq("user_id", userIdRef.current);
         setShowRenewalDialog(true);
       }
     }, 1000);
@@ -224,7 +224,9 @@ const Dashboard = () => {
     toast.error("تم إيقاف الباقة — الربح موقوف");
     setShowRenewalDialog(false);
     setRenewalHandled(false);
-    renewalSentRef.current = true; // prevent showing again
+    renewalSentRef.current = true;
+    renewalDoneRef.current = true;
+    setRenewalDone(true);
   };
 
   const handleLogout = async () => {

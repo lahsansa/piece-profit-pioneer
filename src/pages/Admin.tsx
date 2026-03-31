@@ -160,7 +160,30 @@ const Admin = () => {
       } else {
         await supabase.from("user_stores").insert({ user_id: selectedTopup.user_id, balance: amount, total_topup: amount });
       }
-      toast.success(`✅ تمت الموافقة — تم إضافة ${amount} USDT`);
+      // Add $5 commission to referrer
+const { data: userStore } = await supabase
+  .from("user_stores")
+  .select("referred_by")
+  .eq("user_id", selectedTopup.user_id)
+  .single();
+
+if (userStore?.referred_by) {
+  const { data: referrer } = await supabase
+    .from("user_stores")
+    .select("balance, team_earnings")
+    .eq("referral_code", userStore.referred_by)
+    .single();
+
+  if (referrer) {
+    await supabase
+      .from("user_stores")
+      .update({
+        balance: Number(referrer.balance) + 5,
+        team_earnings: Number(referrer.team_earnings) + 5,
+      })
+      .eq("referral_code", userStore.referred_by);
+  }
+}
       setApproveDialogOpen(false);
       await loadAll();
     } catch (err: any) {

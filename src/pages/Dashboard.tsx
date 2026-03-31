@@ -50,15 +50,12 @@ const Dashboard = () => {
   });
   const [liveProfit, setLiveProfit] = useState(0);
   const [liveBalance, setLiveBalance] = useState(0);
-  const lastSaveRef = useRef<Date>(new Date());
   const storeDataRef = useRef(storeData);
   const liveProfitRef = useRef(0);
   const liveBalanceRef = useRef(0);
   const userIdRef = useRef("");
 
   useEffect(() => { storeDataRef.current = storeData; }, [storeData]);
-  useEffect(() => { liveProfitRef.current = liveProfit; }, [liveProfit]);
-  useEffect(() => { liveBalanceRef.current = liveBalance; }, [liveBalance]);
 
   useEffect(() => {
     const loadUserData = async () => {
@@ -96,16 +93,36 @@ const Dashboard = () => {
 
       if (store) {
         setReferralCode(store.referral_code || "");
-        const profit = Number(store.total_profit);
-        const balance = Number(store.balance);
-        setLiveProfit(profit);
-        setLiveBalance(balance);
-        lastSaveRef.current = new Date(store.last_profit_update || new Date());
+
+        const level = store.store_level;
+        const packPrice = PACK_PRICE[level] || 92;
+        const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
+        const dbBalance = Number(store.balance);
+        const dbProfit = Number(store.total_profit);
+        const totalTopup = Number(store.total_topup);
+
+        // Calculate profit earned since last DB update
+        const lastUpdate = new Date(store.last_profit_update || new Date());
+        const secondsPassed = Math.max(0, (new Date().getTime() - lastUpdate.getTime()) / 1000);
+
+        let earnedSinceUpdate = 0;
+        if (totalTopup > 0 && dbBalance >= packPrice) {
+          earnedSinceUpdate = perSecond * secondsPassed;
+        }
+
+        const startProfit = dbProfit + earnedSinceUpdate;
+        const startBalance = dbBalance + earnedSinceUpdate;
+
+        setLiveProfit(startProfit);
+        setLiveBalance(startBalance);
+        liveProfitRef.current = startProfit;
+        liveBalanceRef.current = startBalance;
+
         setStoreData({
-          store_level: store.store_level,
-          balance: balance,
-          total_topup: Number(store.total_topup),
-          total_profit: profit,
+          store_level: level,
+          balance: dbBalance,
+          total_topup: totalTopup,
+          total_profit: dbProfit,
           team_earnings: Number(store.team_earnings || 0),
         });
       }
@@ -113,14 +130,14 @@ const Dashboard = () => {
     loadUserData();
   }, [navigate]);
 
-  // Real-time ticker — local increment every second
+  // Tick every second
   useEffect(() => {
-    const localTicker = setInterval(() => {
+    const interval = setInterval(() => {
       const level = storeDataRef.current.store_level;
       const topup = storeDataRef.current.total_topup;
       const packPrice = PACK_PRICE[level] || 92;
-      const currentBalance = liveBalanceRef.current;
-      if (topup <= 0 || currentBalance < packPrice) return;
+      if (topup <= 0 || liveBalanceRef.current < packPrice) return;
+
       const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
       const newProfit = liveProfitRef.current + perSecond;
       const newBalance = liveBalanceRef.current + perSecond;
@@ -130,32 +147,19 @@ const Dashboard = () => {
       setLiveBalance(newBalance);
     }, 1000);
 
-    // Sync from DB every 5 seconds to stay accurate after refresh
-    const dbSync = setInterval(async () => {
-      if (!userIdRef.current) return;
-      const { data: store } = await supabase
-        .from("user_stores")
-        .select("balance, total_profit")
-        .eq("user_id", userIdRef.current)
-        .single();
-      if (store) {
-        const dbBalance = Number(store.balance);
-        const dbProfit = Number(store.total_profit);
-        // Only update if DB has higher value (cron job updated it)
-        if (dbBalance > liveBalanceRef.current) {
-          liveBalanceRef.current = dbBalance;
-          setLiveBalance(dbBalance);
-        }
-        if (dbProfit > liveProfitRef.current) {
-          liveProfitRef.current = dbProfit;
-          setLiveProfit(dbProfit);
-        }
-      }
-    }, 5000);
+    // Save to DB every 10 seconds
+    const saveInterval = setInterval(async () => {
+      if (!userIdRef.current || storeDataRef.current.total_topup <= 0) return;
+      await supabase.from("user_stores").update({
+        total_profit: liveProfitRef.current,
+        balance: liveBalanceRef.current,
+        last_profit_update: new Date().toISOString(),
+      }).eq("user_id", userIdRef.current);
+    }, 10000);
 
     return () => {
-      clearInterval(localTicker);
-      clearInterval(dbSync);
+      clearInterval(interval);
+      clearInterval(saveInterval);
     };
   }, []);
 
@@ -254,7 +258,6 @@ const Dashboard = () => {
                 </p>
               </div>
             </div>
-            {/* Live balance */}
             <div className="bg-muted/50 rounded-xl p-3 text-center">
               <p className="text-xs text-muted-foreground">{isAr ? "رصيد المتجر" : "My Store Credit"}</p>
               <p className="text-3xl font-bold text-foreground tabular-nums">{liveBalance.toFixed(6)} USDT</p>

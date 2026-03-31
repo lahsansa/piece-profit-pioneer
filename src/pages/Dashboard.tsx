@@ -16,11 +16,19 @@ const generateReferralCode = () => Math.random().toString(36).substring(2, 10).t
 
 // Profit per second for each store level (max daily / 86400)
 const PROFIT_PER_SECOND: Record<string, number> = {
-  "Small shop":   11.5   / 86400,  // $0.000133/s
-  "Medium shop":  39     / 86400,  // $0.000451/s
-  "Large shop":   92     / 86400,  // $0.001065/s
-  "Mega shop":    135    / 86400,  // $0.001563/s
-  "VIP":          220    / 86400,  // $0.002546/s
+  "Small shop":   11.5   / 86400,
+  "Medium shop":  39     / 86400,
+  "Large shop":   92     / 86400,
+  "Mega shop":    135    / 86400,
+  "VIP":          220    / 86400,
+};
+
+const PACK_PRICE: Record<string, number> = {
+  "Small shop":   92,
+  "Medium shop":  320,
+  "Large shop":   700,
+  "Mega shop":    1000,
+  "VIP":          1500,
 };
 
 const Dashboard = () => {
@@ -104,8 +112,10 @@ const Dashboard = () => {
       const level = storeDataRef.current.store_level;
       const topup = storeDataRef.current.total_topup;
       
-      // Only earn profit if user has topped up
-      if (topup <= 0) return;
+      // Only earn profit if balance >= pack price
+      const packPrice = PACK_PRICE[level] || 92;
+      const currentBalance = storeDataRef.current.balance;
+      if (topup <= 0 || currentBalance < packPrice) return;
 
       const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
       
@@ -291,16 +301,33 @@ const Dashboard = () => {
               <span className="text-sm font-bold text-foreground">{storeData.team_earnings.toFixed(2)}</span>
             </div>
 
-            {/* Daily rate info */}
+            {/* Pack status */}
             {storeData.total_topup > 0 && (
-              <div className="bg-green-50 rounded-xl p-3 text-center">
-                <p className="text-xs text-green-600 font-medium">
-                  📈 {isAr ? "معدل الربح اليومي" : "Daily profit rate"}: 
-                  <span className="font-bold mr-1">
-                    ~${((PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400).toFixed(2)}/day
-                  </span>
-                </p>
-              </div>
+              storeData.balance >= (PACK_PRICE[storeData.store_level] || 92) ? (
+                <div className="bg-green-50 rounded-xl p-3 text-center">
+                  <p className="text-xs text-green-600 font-medium">
+                    📈 {isAr ? "معدل الربح اليومي" : "Daily profit rate"}:{" "}
+                    <span className="font-bold">
+                      ~${((PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400).toFixed(2)}/day
+                    </span>
+                  </p>
+                  <p className="text-xs text-green-500 mt-1">✅ {isAr ? "الباقة نشطة" : "Pack is active"}</p>
+                </div>
+              ) : (
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
+                  <p className="text-xs text-orange-600 font-bold">
+                    ⚠️ {isAr ? "الرصيد غير كافٍ لتفعيل الباقة" : "Insufficient balance to activate pack"}
+                  </p>
+                  <p className="text-xs text-orange-500 mt-1">
+                    {isAr ? "تحتاج" : "You need"}{" "}
+                    <span className="font-bold">${PACK_PRICE[storeData.store_level] || 92}</span>
+                    {" "}{isAr ? "لتفعيل" : "to activate"} {storeData.store_level}
+                  </p>
+                  <Link to="/topup" className="inline-block mt-2 bg-orange-500 text-white text-xs font-bold px-4 py-1.5 rounded-full">
+                    {isAr ? "أكمل الشحن" : "Top up now"} →
+                  </Link>
+                </div>
+              )
             )}
           </CardContent>
         </Card>

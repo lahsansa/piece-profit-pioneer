@@ -150,7 +150,7 @@ const StoreLevels = () => {
         {storePlans.map((plan, i) => {
           const Icon = plan.icon;
           const packName = PACK_NAME_MAP[plan.id];
-          const isCurrentPack = packName === currentPack;
+          const isCurrentPack = packName === currentPack && storeData?.total_topup > 0;
           const isUpgrade = currentPack && plan.price > currentPrice;
           const diff = plan.price - currentPrice;
 

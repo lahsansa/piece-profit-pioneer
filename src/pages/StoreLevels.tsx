@@ -51,12 +51,8 @@ const storePlans = [
 ];
 
 const PACK_NAME_MAP: Record<string, string> = {
-  "small":    "Small shop",
-  "medium":   "Medium shop",
-  "large":    "Large shop",
-  "xl":       "Mega shop",
-  "premium":  "Premium shop",
-  "investor": "Investor shop",
+  "small": "Small shop", "medium": "Medium shop", "large": "Large shop",
+  "xl": "Mega shop", "premium": "VIP", "investor": "VIP",
 };
 
 const StoreLevels = () => {
@@ -65,48 +61,38 @@ const StoreLevels = () => {
   const [currentPrice, setCurrentPrice] = useState(0);
   const [userId, setUserId] = useState("");
   const [loading, setLoading] = useState(false);
-  const [hasPaid, setHasPaid] = useState(false); // ← مهم
 
   useEffect(() => {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       setUserId(user.id);
-      const { data: store } = await supabase
-        .from("user_stores")
-        .select("store_level, total_topup")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
+      const { data: store } = await supabase.from("user_stores").select("store_level").eq("user_id", user.id).maybeSingle();
       if (store) {
         setCurrentPack(store.store_level);
-        // Only mark as paid if total_topup > 0
-        if (Number(store.total_topup) > 0) {
-          setHasPaid(true);
-          const plan = storePlans.find(p => PACK_NAME_MAP[p.id] === store.store_level);
-          if (plan) setCurrentPrice(plan.price);
-        }
+        const plan = storePlans.find(p => PACK_NAME_MAP[p.id] === store.store_level);
+        if (plan) setCurrentPrice(plan.price);
       }
     };
     load();
   }, []);
 
-  const handleAction = async (plan: typeof storePlans[0]) => {
+  const handleUpgrade = async (plan: typeof storePlans[0]) => {
     const packName = PACK_NAME_MAP[plan.id];
-
-    // No pack yet OR not paid → go to topup
-    if (!hasPaid) {
+    
+    // If no current pack → go to topup
+    if (!currentPack) {
       navigate(`/topup?amount=${plan.price}&plan=${encodeURIComponent(plan.nameAr)}`);
       return;
     }
 
-    // Same pack → already active
+    // If same pack → already active
     if (packName === currentPack) {
       toast.info("هذه هي باقتك الحالية");
       return;
     }
 
-    // Lower pack → can't downgrade
+    // If lower pack → can't downgrade
     if (plan.price <= currentPrice) {
       toast.error("لا يمكن الترقية لباقة أقل");
       return;
@@ -116,7 +102,7 @@ const StoreLevels = () => {
     const diff = plan.price - currentPrice;
     setLoading(true);
     try {
-      const { error } = await supabase.from("pack_upgrades").insert({
+      navigate(`/topup?amount=${diff}&plan=${encodeURIComponent(plan.nameAr)}&upgrade=true&from=${encodeURIComponent(currentPack)}&to=${encodeURIComponent(packName)}`);
         user_id: userId,
         current_pack: currentPack,
         requested_pack: packName,
@@ -138,7 +124,7 @@ const StoreLevels = () => {
         <div className="max-w-md mx-auto text-center">
           <h1 className="text-xl font-bold tracking-wide">مستوى المتجر</h1>
           <p className="text-emerald-100 text-sm mt-1">اختر مستواك وابدأ رحلة الربح اليوم</p>
-          {hasPaid && currentPack && (
+          {currentPack && (
             <div className="mt-2 inline-block bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full">
               باقتك الحالية: {currentPack}
             </div>
@@ -160,10 +146,8 @@ const StoreLevels = () => {
         {storePlans.map((plan, i) => {
           const Icon = plan.icon;
           const packName = PACK_NAME_MAP[plan.id];
-
-          // Only show as current if user has actually paid
-          const isCurrentPack = hasPaid && packName === currentPack;
-          const isUpgrade = hasPaid && plan.price > currentPrice && packName !== currentPack;
+          const isCurrentPack = packName === currentPack;
+          const isUpgrade = currentPack && plan.price > currentPrice;
           const diff = plan.price - currentPrice;
 
           return (
@@ -180,9 +164,7 @@ const StoreLevels = () => {
                     <Icon className="w-5 h-5 text-white" />
                   </div>
                   <p className="font-bold text-white text-base">{plan.nameAr}</p>
-                  {isCurrentPack && (
-                    <span className="bg-white text-emerald-600 text-xs font-bold px-2 py-0.5 rounded-full">✅ باقتك</span>
-                  )}
+                  {isCurrentPack && <span className="bg-white text-emerald-600 text-xs font-bold px-2 py-0.5 rounded-full">✅ باقتك</span>}
                 </div>
                 <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-1 rounded-full">{plan.level}</span>
               </div>
@@ -216,9 +198,7 @@ const StoreLevels = () => {
                     </div>
                     <div className="flex items-center justify-between border-t border-emerald-100 pt-2">
                       <span className="text-xs text-gray-500">🏆 سنوياً</span>
-                      <span className="text-base font-bold text-teal-700">
-                        {plan.yearly.min.toLocaleString()} – {plan.yearly.max.toLocaleString()} USDT
-                      </span>
+                      <span className="text-base font-bold text-teal-700">{plan.yearly.min.toLocaleString()} – {plan.yearly.max.toLocaleString()} USDT</span>
                     </div>
                   </div>
                 </div>
@@ -229,21 +209,25 @@ const StoreLevels = () => {
                   </div>
                 ) : isUpgrade ? (
                   <button
-                    onClick={() => handleAction(plan)}
+                    onClick={() => handleUpgrade(plan)}
                     disabled={loading}
                     className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg flex items-center justify-center gap-2"
                   >
                     <ArrowUp className="w-5 h-5" />
                     ترقية — ادفع ${diff} فقط
                   </button>
-                ) : (
+                ) : currentPack && plan.price < currentPrice ? (
+                  <div className="w-full py-3.5 rounded-xl bg-gray-100 text-gray-400 font-bold text-base text-center cursor-not-allowed">
+                    🔒 لا يمكن التخفيض
+                  </div>
+                ) : !currentPack ? (
                   <button
-                    onClick={() => handleAction(plan)}
+                    onClick={() => navigate(`/topup?amount=${plan.price}&plan=${encodeURIComponent(plan.nameAr)}`)}
                     className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg shadow-emerald-200"
                   >
                     قم بالتفعيل الآن — ${plan.price} USDT 🚀
                   </button>
-                )}
+                ) : null}
               </div>
             </motion.div>
           );

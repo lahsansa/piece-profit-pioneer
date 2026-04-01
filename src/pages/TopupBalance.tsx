@@ -12,7 +12,7 @@ import Footer from "@/components/Footer";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-const WALLET_ADDRESS = "TQkQj9Ru2VTTEHokygVKZdoWTKsJcMgASj";
+const WALLET_ADDRESS = "TXrZ9BGi7H5kkGJN6u5rL4rDPxu7A1CxQN";
 
 const TopupBalance = () => {
   const [searchParams] = useSearchParams();

@@ -102,7 +102,7 @@ const StoreLevels = () => {
     const diff = plan.price - currentPrice;
     setLoading(true);
     try {
-      navigate(`/topup?amount=${diff}&plan=${encodeURIComponent(plan.nameAr)}&upgrade=true&from=${encodeURIComponent(currentPack)}&to=${encodeURIComponent(packName)}`);
+      const { error } = await supabase.from("pack_upgrades").insert({
         user_id: userId,
         current_pack: currentPack,
         requested_pack: packName,

@@ -20,12 +20,12 @@ import Orders from "@/pages/Orders";
 import TopupBalance from "@/pages/TopupBalance";
 import Admin from "@/pages/Admin";
 import Withdraw from "@/pages/Withdraw";
+import Notifications from "@/pages/Notifications";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 const queryClient = new QueryClient();
 
-// Protected route — redirects to /login if not logged in
 const Protected = ({ children }: { children: React.ReactNode }) => {
   const [checked, setChecked] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -50,12 +50,12 @@ const App = () => (
         <BrowserRouter>
           <Navbar />
           <Routes>
-            {/* Public pages */}
+            {/* Public */}
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/admin" element={<Admin />} />
 
-            {/* Protected pages */}
+            {/* Protected */}
             <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
             <Route path="/store-levels" element={<Protected><StoreLevels /></Protected>} />
             <Route path="/business-plan" element={<Protected><BusinessPlan /></Protected>} />
@@ -66,6 +66,7 @@ const App = () => (
             <Route path="/orders" element={<Protected><Orders /></Protected>} />
             <Route path="/topup" element={<Protected><TopupBalance /></Protected>} />
             <Route path="/withdraw" element={<Protected><Withdraw /></Protected>} />
+            <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
 
             <Route path="*" element={<NotFound />} />
           </Routes>

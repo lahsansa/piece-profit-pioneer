@@ -15,19 +15,21 @@ import { toast } from "sonner";
 const generateReferralCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
 
 const PROFIT_PER_SECOND: Record<string, number> = {
-  "Small shop":  11.5  / 86400,
-  "Medium shop": 39    / 86400,
-  "Large shop":  92    / 86400,
-  "Mega shop":   135   / 86400,
-  "VIP":         220   / 86400,
+  "Small shop":    11.5  / 86400,
+  "Medium shop":   39    / 86400,
+  "Large shop":    92    / 86400,
+  "Mega shop":     135   / 86400,
+  "Premium shop":  180   / 86400,
+  "Investor shop": 300   / 86400,
 };
 
 const PACK_PRICE: Record<string, number> = {
-  "Small shop":  92,
-  "Medium shop": 320,
-  "Large shop":  700,
-  "Mega shop":   1000,
-  "VIP":         1500,
+  "Small shop":    92,
+  "Medium shop":   320,
+  "Large shop":    700,
+  "Mega shop":     1000,
+  "Premium shop":  1500,
+  "Investor shop": 2000,
 };
 
 const Dashboard = () => {
@@ -49,6 +51,7 @@ const Dashboard = () => {
     team_earnings: 0,
   });
   const [liveProfit, setLiveProfit] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [liveBalance, setLiveBalance] = useState(0);
 
   const storeDataRef = useRef(storeData);
@@ -94,6 +97,10 @@ const Dashboard = () => {
         await supabase.from("user_stores").update({ referral_code: newCode }).eq("user_id", user.id);
         store.referral_code = newCode;
       }
+
+      // Load unread notifications
+      const { count } = await supabase.from("notifications").select("*", { count: "exact", head: true }).eq("user_id", user.id).eq("read", false);
+      if (count) setUnreadCount(count);
 
       if (store) {
         setReferralCode(store.referral_code || "");
@@ -210,11 +217,12 @@ const Dashboard = () => {
   };
 
   const storeLevelAr: Record<string, string> = {
-    "Small shop": "متجر صغير",
-    "Medium shop": "متجر متوسط",
-    "Large shop": "متجر كبير",
-    "Mega shop": "متجر ميغا",
-    "VIP": "VIP",
+    "Small shop":    "متجر صغير",
+    "Medium shop":   "متجر متوسط",
+    "Large shop":    "متجر كبير",
+    "Mega shop":     "متجر ميغا",
+    "Premium shop":  "متجر بريميوم",
+    "Investor shop": "متجر المستثمر",
   };
 
   const quickActions = [
@@ -240,9 +248,19 @@ const Dashboard = () => {
           {isAr ? "مستوى المتجر" : "Position"}:{" "}
           <span className="font-bold">{isAr ? (storeLevelAr[storeData.store_level] || storeData.store_level) : storeData.store_level}</span>
         </p>
-        <Button variant="ghost" size="icon" onClick={handleLogout} className="text-primary-foreground">
-          <LogOut className="w-5 h-5" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Link to="/notifications" className="relative p-2">
+            <Bell className="w-5 h-5 text-primary-foreground" />
+            {unreadCount > 0 && (
+              <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                {unreadCount}
+              </span>
+            )}
+          </Link>
+          <Button variant="ghost" size="icon" onClick={handleLogout} className="text-primary-foreground">
+            <LogOut className="w-5 h-5" />
+          </Button>
+        </div>
       </div>
 
       <div className="max-w-md mx-auto px-4 py-5 space-y-5">

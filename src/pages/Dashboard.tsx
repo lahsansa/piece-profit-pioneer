@@ -1,624 +1,409 @@
-import { useEffect, useState, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Shield, CheckCircle, XCircle, Lock, Plus, Minus, Edit, Users } from "lucide-react";
+import { useLang } from "@/hooks/use-lang";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  Wallet, ArrowDownToLine, CreditCard, UserCog,
+  Globe, Landmark, Download, Search, User, Shield, LogOut, Copy, Check,
+} from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-const ADMIN_USERNAME = "hassan";
-const ADMIN_PASSWORD = "hassan";
-const STORE_LEVELS = ["Small shop", "Medium shop", "Large shop", "Mega shop", "Premium shop", "Investor shop"];
-const REFERRAL_COMMISSION = 5;
+const generateReferralCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
 
-const Admin = () => {
-  const [adminAuth, setAdminAuth] = useState(false);
-  const [adminUser, setAdminUser] = useState("");
-  const [adminPass, setAdminPass] = useState("");
-  const [users, setUsers] = useState([]);
-  const [topups, setTopups] = useState([]);
-  const [withdrawals, setWithdrawals] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState("topups");
-  const [approveDialogOpen, setApproveDialogOpen] = useState(false);
-  const [selectedTopup, setSelectedTopup] = useState(null);
-  const [editedAmount, setEditedAmount] = useState("");
-  const [balanceDialogOpen, setBalanceDialogOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState(null);
-  const [balanceAmount, setBalanceAmount] = useState("");
-  const [balanceAction, setBalanceAction] = useState("add");
-  const [levelDialogOpen, setLevelDialogOpen] = useState(false);
-  const [selectedLevel, setSelectedLevel] = useState("");
-  const [manualDialogOpen, setManualDialogOpen] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [manualAmount, setManualAmount] = useState("");
-  const [manualTxid, setManualTxid] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [referralDialogOpen, setReferralDialogOpen] = useState(false);
-  const [upgrades, setUpgrades] = useState([]);
-  const [selectedUserReferrals, setSelectedUserReferrals] = useState([]);
-  const [selectedUserName, setSelectedUserName] = useState("");
-  const approvingRef = useRef(new Set());
+const PROFIT_PER_SECOND: Record<string, number> = {
+  "Small shop":    11.5  / 86400,
+  "Medium shop":   39    / 86400,
+  "Large shop":    92    / 86400,
+  "Mega shop":     135   / 86400,
+  "Premium shop":  180   / 86400,
+  "Investor shop": 300   / 86400,
+};
 
-  useEffect(() => { if (adminAuth) loadAll(); }, [adminAuth]);
+const PACK_PRICE: Record<string, number> = {
+  "Small shop":    92,
+  "Medium shop":   320,
+  "Large shop":    700,
+  "Mega shop":     1000,
+  "Premium shop":  1500,
+  "Investor shop": 2000,
+};
 
-  const handleAdminLogin = () => {
-    if (adminUser === ADMIN_USERNAME && adminPass === ADMIN_PASSWORD) {
-      setAdminAuth(true);
-    } else {
-      toast.error("Username أو Password غلط ❌");
-    }
-  };
+const Dashboard = () => {
+  const { lang } = useLang();
+  const isAr = lang === "ar";
+  const navigate = useNavigate();
+  const [searchDate, setSearchDate] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [userId, setUserId] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [referralCode, setReferralCode] = useState("");
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [storeData, setStoreData] = useState({
+    store_level: "Small shop",
+    balance: 0,
+    total_topup: 0,
+    total_profit: 0,
+    team_earnings: 0,
+  });
+  const [liveProfit, setLiveProfit] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [liveBalance, setLiveBalance] = useState(0);
 
-  const loadAll = async () => {
-    setLoading(true);
-    await Promise.all([loadUsers(), loadTopups(), loadWithdrawals(), loadUpgrades()]);
-    setLoading(false);
-  };
+  const storeDataRef = useRef(storeData);
+  const liveProfitRef = useRef(0);
+  const liveBalanceRef = useRef(0);
+  const userIdRef = useRef("");
+  // This ref persists across re-renders and refreshes (loaded from DB)
+  const renewalBlockedRef = useRef(false);
 
-  const loadUsers = async () => {
-    const { data: allUsers } = await supabase.from("user_stores").select("*");
-    if (!allUsers) return;
-    const usersWithStats = allUsers.map((u) => {
-      const myCode = u.referral_code;
-      const referrals = allUsers.filter((r) => r.referred_by === myCode);
-      const paidReferrals = referrals.filter((r) => Number(r.total_topup) > 0);
-      return {
-        user_id: u.user_id,
-        store_level: u.store_level,
-        balance: Number(u.balance),
-        total_topup: Number(u.total_topup),
-        total_profit: Number(u.total_profit),
-        referral_code: u.referral_code || "",
-        referred_by: u.referred_by || "",
-        referral_count: referrals.length,
-        paid_referrals: paidReferrals.length,
-      };
-    });
-    setUsers(usersWithStats);
-  };
+  useEffect(() => { storeDataRef.current = storeData; }, [storeData]);
 
-  const loadTopups = async () => {
-    const { data } = await supabase.from("topups").select("*").order("created_at", { ascending: false });
-    if (data) setTopups(data);
-  };
+  useEffect(() => {
+    const loadUserData = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { navigate("/login"); return; }
+      userIdRef.current = user.id;
+      setUserEmail(user.email || "");
+      setUserId(user.id.slice(0, 8).toUpperCase());
 
-  const loadWithdrawals = async () => {
-    const { data } = await supabase.from("withdrawals").select("*").order("created_at", { ascending: false });
-    if (data) setWithdrawals(data);
-  };
+      const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
+      if (roles && roles.some((r: any) => r.role === "admin")) setIsAdmin(true);
 
-  const loadUpgrades = async () => {
-    const { data } = await supabase.from("pack_upgrades").select("*").order("created_at", { ascending: false });
-    if (data) setUpgrades(data);
-  };
+      let { data: store } = await supabase.from("user_stores").select("*").eq("user_id", user.id).maybeSingle();
 
-  const handleApproveUpgrade = async (upgrade) => {
-    try {
-      // Update pack level
-      await supabase.from("user_stores").update({ store_level: upgrade.requested_pack }).eq("user_id", upgrade.user_id);
-      // Deduct amount from balance
-      const { data: store } = await supabase.from("user_stores").select("balance").eq("user_id", upgrade.user_id).single();
-      if (store) {
-        await supabase.from("user_stores").update({ balance: Number(store.balance) - Number(upgrade.amount_to_pay) }).eq("user_id", upgrade.user_id);
+      if (!store) {
+        const newCode = generateReferralCode();
+        const { data: newStore } = await supabase.from("user_stores").insert({
+          user_id: user.id,
+          referral_code: newCode,
+          store_level: "Small shop",
+          balance: 0,
+          total_topup: 0,
+          total_profit: 0,
+          team_earnings: 0,
+          last_profit_update: new Date().toISOString(),
+          renewal_handled: false,
+        }).select().single();
+        store = newStore;
       }
-      await supabase.from("pack_upgrades").update({ status: "confirmed" }).eq("id", upgrade.id);
-      // Send notification with topup link
-      await supabase.from("notifications").insert({
-        user_id: upgrade.user_id,
-        message: `⬆️ تمت الموافقة على ترقيتك إلى ${upgrade.requested_pack}! يرجى دفع $${upgrade.amount_to_pay} لتفعيل الباقة الجديدة`,
-        type: "upgrade",
-        link: `/topup?amount=${upgrade.amount_to_pay}&plan=${encodeURIComponent(upgrade.requested_pack)}`,
-      });
-      toast.success(`✅ تمت الترقية لـ ${upgrade.requested_pack} وتم إرسال إشعار للمستخدم`);
-      await loadAll();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
-  };
 
-  const handleRejectUpgrade = async (upgradeId) => {
-    try {
-      await supabase.from("pack_upgrades").update({ status: "rejected" }).eq("id", upgradeId);
-      toast.success("تم رفض طلب الترقية");
-      await loadUpgrades();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
-  };
-
-  const openApproveDialog = (topup) => {
-    setSelectedTopup(topup);
-    setEditedAmount(String(topup.amount_usdt));
-    setApproveDialogOpen(true);
-  };
-
-  const handleApprove = async () => {
-    if (!selectedTopup) return;
-    const amount = Number(editedAmount);
-    if (!amount || amount <= 0) { toast.error("أدخل مبلغ صحيح"); return; }
-    if (approvingRef.current.has(selectedTopup.id)) return;
-    approvingRef.current.add(selectedTopup.id);
-    setSubmitting(true);
-    try {
-      const { error } = await supabase.from("topups").update({ status: "confirmed", amount_usdt: amount }).eq("id", selectedTopup.id).eq("status", "pending");
-      if (error) throw error;
-      const { data: store } = await supabase.from("user_stores").select("balance, total_topup, referred_by").eq("user_id", selectedTopup.user_id).single();
-      if (store) {
-        const bonus = Math.round(amount * 0.05 * 100) / 100;
-        const totalCredit = amount + bonus;
-        await supabase.from("user_stores").update({ balance: Number(store.balance) + totalCredit, total_topup: Number(store.total_topup) + amount }).eq("user_id", selectedTopup.user_id);
-        if (store.referred_by) {
-          const { data: referrer } = await supabase.from("user_stores").select("balance, team_earnings").eq("referral_code", store.referred_by).single();
-          if (referrer) {
-            await supabase.from("user_stores").update({ balance: Number(referrer.balance) + REFERRAL_COMMISSION, team_earnings: Number(referrer.team_earnings || 0) + REFERRAL_COMMISSION }).eq("referral_code", store.referred_by);
-            toast.success(`✅ تمت الموافقة — ${amount} USDT + ${bonus} bonus (5%) 🎁 + $${REFERRAL_COMMISSION} للمحيل`);
-          } else { toast.success(`✅ تمت الموافقة — ${amount} USDT + ${bonus} bonus (5%) 🎁`); }
-        } else { toast.success(`✅ تمت الموافقة — ${amount} USDT + ${bonus} bonus (5%) 🎁`); }
-      } else {
-        await supabase.from("user_stores").insert({ user_id: selectedTopup.user_id, balance: amount, total_topup: amount });
-        toast.success(`✅ تمت الموافقة — ${amount} USDT + ${bonus} bonus (5%) 🎁`);
+      if (store && !store.referral_code) {
+        const newCode = generateReferralCode();
+        await supabase.from("user_stores").update({ referral_code: newCode }).eq("user_id", user.id);
+        store.referral_code = newCode;
       }
-      setApproveDialogOpen(false);
-      await loadAll();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
-    finally { approvingRef.current.delete(selectedTopup.id); setSubmitting(false); }
-  };
 
-  const handleReject = async (topupId) => {
-    try {
-      await supabase.from("topups").update({ status: "rejected" }).eq("id", topupId);
-      toast.success("تم رفض الطلب");
-      await loadTopups();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
-  };
+      // Load unread notifications
+      const { count } = await supabase.from("notifications").select("*", { count: "exact", head: true }).eq("user_id", user.id).eq("read", false);
+      if (count) setUnreadCount(count);
 
-  const handleApproveWithdraw = async (w) => {
-    try {
-      await supabase.from("withdrawals").update({ status: "confirmed" }).eq("id", w.id);
-      toast.success(`✅ تم تأكيد سحب ${w.amount} USDT`);
-      await loadWithdrawals();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
-  };
-
-  const handleRejectWithdraw = async (w) => {
-    try {
-      // Refund balance
-      const { data: store } = await supabase.from("user_stores").select("balance").eq("user_id", w.user_id).single();
       if (store) {
-        await supabase.from("user_stores").update({ balance: Number(store.balance) + Number(w.amount) }).eq("user_id", w.user_id);
-      }
-      await supabase.from("withdrawals").update({ status: "rejected" }).eq("id", w.id);
-      toast.success("تم رفض طلب السحب وإرجاع الرصيد");
-      await loadAll();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
-  };
+        setReferralCode(store.referral_code || "");
 
-  const openBalanceDialog = (user, action) => { setSelectedUser(user); setBalanceAction(action); setBalanceAmount(""); setBalanceDialogOpen(true); };
+        const level = store.store_level;
+        const packPrice = PACK_PRICE[level] || 92;
+        const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
+        const dbBalance = Number(store.balance);
+        const dbProfit = Number(store.total_profit);
+        const totalTopup = Number(store.total_topup);
 
-  const handleBalanceUpdate = async () => {
-    if (!selectedUser || !balanceAmount || Number(balanceAmount) <= 0) { toast.error("أدخل مبلغ صحيح"); return; }
-    const amount = Number(balanceAmount);
-    const newBalance = balanceAction === "add" ? selectedUser.balance + amount : Math.max(0, selectedUser.balance - amount);
-    try {
-      await supabase.from("user_stores").update({ balance: newBalance }).eq("user_id", selectedUser.user_id);
-      toast.success(balanceAction === "add" ? `✅ تمت إضافة ${amount} $` : `✅ تم خصم ${amount} $`);
-      setBalanceDialogOpen(false);
-      await loadUsers();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
-  };
+        // Load renewal_handled from DB — this is the KEY fix
+        const isRenewalBlocked = store.renewal_handled === true;
+        renewalBlockedRef.current = isRenewalBlocked;
 
-  const openLevelDialog = (user) => { setSelectedUser(user); setSelectedLevel(user.store_level); setLevelDialogOpen(true); };
+        const lastUpdate = new Date(store.last_profit_update || new Date());
+        const secondsPassed = Math.max(0, (new Date().getTime() - lastUpdate.getTime()) / 1000);
 
-  const handleLevelUpdate = async () => {
-    if (!selectedUser || !selectedLevel) return;
-    try {
-      await supabase.from("user_stores").update({ store_level: selectedLevel }).eq("user_id", selectedUser.user_id);
-      toast.success("✅ تم تحديث مستوى المتجر");
-      setLevelDialogOpen(false);
-      await loadUsers();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
-  };
-
-  const handleManualTopup = async () => {
-    if (!manualTxid.trim() || !manualAmount || Number(manualAmount) <= 0) { toast.error("أدخل المعرف والمبلغ"); return; }
-    setSubmitting(true);
-    try {
-      await supabase.from("topups").insert({ user_id: selectedUserId, txid: manualTxid.trim(), amount_usdt: Number(manualAmount), status: "confirmed" });
-      const { data: store } = await supabase.from("user_stores").select("balance, total_topup, referred_by").eq("user_id", selectedUserId).single();
-      if (store) {
-        await supabase.from("user_stores").update({ balance: Number(store.balance) + Number(manualAmount), total_topup: Number(store.total_topup) + Number(manualAmount) }).eq("user_id", selectedUserId);
-        if (store.referred_by) {
-          const { data: referrer } = await supabase.from("user_stores").select("balance, team_earnings").eq("referral_code", store.referred_by).single();
-          if (referrer) { await supabase.from("user_stores").update({ balance: Number(referrer.balance) + REFERRAL_COMMISSION, team_earnings: Number(referrer.team_earnings || 0) + REFERRAL_COMMISSION }).eq("referral_code", store.referred_by); }
+        let earnedSinceUpdate = 0;
+        if (totalTopup > 0 && dbBalance >= packPrice && !isRenewalBlocked) {
+          earnedSinceUpdate = perSecond * secondsPassed;
         }
-      } else { await supabase.from("user_stores").insert({ user_id: selectedUserId, balance: Number(manualAmount), total_topup: Number(manualAmount) }); }
-      toast.success("تمت إضافة الرصيد بنجاح!");
-      setManualDialogOpen(false);
-      await loadAll();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
-    finally { setSubmitting(false); }
+
+        const startProfit = dbProfit + earnedSinceUpdate;
+        const startBalance = dbBalance + earnedSinceUpdate;
+
+        setLiveProfit(startProfit);
+        setLiveBalance(startBalance);
+        liveProfitRef.current = startProfit;
+        liveBalanceRef.current = startBalance;
+
+        setStoreData({
+          store_level: level,
+          balance: dbBalance,
+          total_topup: totalTopup,
+          total_profit: dbProfit,
+          team_earnings: Number(store.team_earnings || 0),
+        });
+
+        // Show renewal dialog ONLY if:
+        // 1. Has topup
+        // 2. Balance < pack price  
+        // 3. renewal_handled is FALSE in DB
+        // 4. Not already closed this session
+        const closedThisSession = sessionStorage.getItem(`renewal_closed_${user.id}`) === "true";
+        if (totalTopup > 0 && dbBalance < packPrice && !isRenewalBlocked && !closedThisSession) {
+                  }
+      }
+    };
+    loadUserData();
+  }, [navigate]);
+
+  // Tick every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const level = storeDataRef.current.store_level;
+      const topup = storeDataRef.current.total_topup;
+      const packPrice = PACK_PRICE[level] || 92;
+
+      // Stop if: no topup, balance low, renewal blocked, or dialog showing
+      if (topup <= 0 || liveBalanceRef.current < packPrice || renewalBlockedRef.current) return;
+
+      const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
+      const newProfit = liveProfitRef.current + perSecond;
+      const newBalance = liveBalanceRef.current + perSecond;
+      liveProfitRef.current = newProfit;
+      liveBalanceRef.current = newBalance;
+      setLiveProfit(newProfit);
+      setLiveBalance(newBalance);
+
+      // No renewal check in interval — only shown on page load
+    }, 1000);
+
+    // Save to DB every 10 seconds
+    const saveInterval = setInterval(async () => {
+      if (!userIdRef.current || storeDataRef.current.total_topup <= 0) return;
+      await supabase.from("user_stores").update({
+        total_profit: liveProfitRef.current,
+        balance: liveBalanceRef.current,
+        last_profit_update: new Date().toISOString(),
+      }).eq("user_id", userIdRef.current);
+    }, 10000);
+
+    return () => { clearInterval(interval); clearInterval(saveInterval); };
+  }, []);
+
+
+  const handleLogout = async () => {
+    if (userIdRef.current && storeDataRef.current.total_topup > 0) {
+      await supabase.from("user_stores").update({
+        total_profit: liveProfitRef.current,
+        balance: liveBalanceRef.current,
+        last_profit_update: new Date().toISOString(),
+      }).eq("user_id", userIdRef.current);
+    }
+    await supabase.auth.signOut();
+    navigate("/login");
   };
 
-  const openReferralDialog = (user) => {
-    setSelectedUserReferrals(users.filter(u => u.referred_by === user.referral_code));
-    setSelectedUserName(user.user_id.slice(0, 8).toUpperCase());
-    setReferralDialogOpen(true);
+  const referralLink = `${window.location.origin}/login?ref=${referralCode}`;
+
+  const copyCode = () => {
+    navigator.clipboard.writeText(referralCode);
+    setCopiedCode(true);
+    toast.success("تم نسخ رمز الدعوة!");
+    setTimeout(() => setCopiedCode(false), 2000);
   };
 
-  if (!adminAuth) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-sm">
-          <CardHeader className="text-center">
-            <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center mx-auto mb-3">
-              <Lock className="w-6 h-6 text-primary-foreground" />
-            </div>
-            <CardTitle className="text-xl">Admin Panel</CardTitle>
-            <p className="text-sm text-muted-foreground">أدخل بيانات الدخول</p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>Username</Label>
-              <Input placeholder="username" value={adminUser} onChange={e => setAdminUser(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdminLogin()} />
-            </div>
-            <div className="space-y-2">
-              <Label>Password</Label>
-              <Input type="password" placeholder="••••••••" value={adminPass} onChange={e => setAdminPass(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdminLogin()} />
-            </div>
-            <Button className="w-full h-11 font-bold" onClick={handleAdminLogin}>دخول</Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const copyLink = () => {
+    navigator.clipboard.writeText(referralLink);
+    setCopiedLink(true);
+    toast.success("تم نسخ رابط الدعوة!");
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
 
-  const pendingTopups = topups.filter(t => t.status === "pending");
-  const otherTopups = topups.filter(t => t.status !== "pending");
-  const pendingWithdrawals = withdrawals.filter(w => w.status === "pending");
-  const otherWithdrawals = withdrawals.filter(w => w.status !== "pending");
+  const storeLevelAr: Record<string, string> = {
+    "Small shop":    "متجر صغير",
+    "Medium shop":   "متجر متوسط",
+    "Large shop":    "متجر كبير",
+    "Mega shop":     "متجر ميغا",
+    "Premium shop":  "متجر بريميوم",
+    "Investor shop": "متجر المستثمر",
+  };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center"><p className="text-muted-foreground">جاري التحميل...</p></div>;
+  const quickActions = [
+    { label: isAr ? "شحن" : "Recharge", icon: Wallet, color: "text-primary", bg: "bg-primary/10", to: "/topup" },
+    { label: isAr ? "سحب" : "Withdrawal", icon: ArrowDownToLine, color: "text-profit", bg: "bg-profit/10", to: "/withdraw" },
+    { label: isAr ? "محفظتي" : "My Wallet", icon: CreditCard, color: "text-orange-500", bg: "bg-orange-500/10", to: null },
+    { label: isAr ? "حسابي" : "Account", icon: UserCog, color: "text-purple-500", bg: "bg-purple-500/10", to: null },
+  ];
+
+  const bottomLinks = [
+    { label: isAr ? "الموقع الرسمي" : "Official Website", icon: Globe },
+    { label: isAr ? "قرض" : "Loan", icon: Landmark },
+    { label: isAr ? "تحميل" : "Download", icon: Download },
+  ];
+
+  const packActive = storeData.total_topup > 0 && liveBalance >= (PACK_PRICE[storeData.store_level] || 92);
 
   return (
-    <div className="min-h-screen bg-background pb-28 pt-6">
-      <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-              <Shield className="w-5 h-5 text-primary-foreground" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold">لوحة الإدارة</h1>
-              <p className="text-sm text-muted-foreground">مرحباً {ADMIN_USERNAME} 👋</p>
-            </div>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => setAdminAuth(false)}>خروج</Button>
-        </div>
+    <div className="min-h-screen bg-background pb-24">
 
-        <div className="flex gap-2 flex-wrap">
-          <Button variant={activeTab === "topups" ? "default" : "outline"} onClick={() => setActiveTab("topups")}>
-            طلبات الشحن {pendingTopups.length > 0 && <Badge className="mr-2 bg-red-500">{pendingTopups.length}</Badge>}
-          </Button>
-          <Button variant={activeTab === "withdrawals" ? "default" : "outline"} onClick={() => setActiveTab("withdrawals")}>
-            طلبات السحب {pendingWithdrawals.length > 0 && <Badge className="mr-2 bg-orange-500">{pendingWithdrawals.length}</Badge>}
-          </Button>
-          <Button variant={activeTab === "users" ? "default" : "outline"} onClick={() => setActiveTab("users")}>
-            المستخدمون ({users.length})
-          </Button>
-          <Button variant={activeTab === "upgrades" ? "default" : "outline"} onClick={() => setActiveTab("upgrades")}>
-            طلبات الترقية {upgrades.filter(u => u.status === "pending").length > 0 && <Badge className="mr-2 bg-purple-500">{upgrades.filter(u => u.status === "pending").length}</Badge>}
+      <div className="bg-primary text-primary-foreground px-4 py-3 pt-16 text-center flex items-center justify-between">
+        <p className="text-sm font-medium flex-1 text-center">
+          {isAr ? "مستوى المتجر" : "Position"}:{" "}
+          <span className="font-bold">{isAr ? (storeLevelAr[storeData.store_level] || storeData.store_level) : storeData.store_level}</span>
+        </p>
+        <div className="flex items-center gap-1">
+          <Link to="/notifications" className="relative p-2">
+            <Bell className="w-5 h-5 text-primary-foreground" />
+            {unreadCount > 0 && (
+              <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                {unreadCount}
+              </span>
+            )}
+          </Link>
+          <Button variant="ghost" size="icon" onClick={handleLogout} className="text-primary-foreground">
+            <LogOut className="w-5 h-5" />
           </Button>
         </div>
+      </div>
 
-        {/* TOPUPS TAB */}
-        {activeTab === "topups" && (
-          <div className="space-y-6">
-            {pendingTopups.length > 0 && (
-              <div className="space-y-4">
-                <h2 className="text-lg font-bold text-orange-500">⏳ طلبات الشحن في الانتظار ({pendingTopups.length})</h2>
-                {pendingTopups.map((t) => (
-                  <Card key={t.id} className="border-orange-500/40">
-                    <CardContent className="p-5">
-                      <div className="flex flex-col md:flex-row gap-5">
-                        <div className="md:w-1/2">
-                          {t.screenshot_url ? <img src={t.screenshot_url} alt="إثبات" className="w-full rounded-xl border object-contain max-h-80" /> : <div className="w-full h-40 rounded-xl border flex items-center justify-center bg-muted text-muted-foreground text-sm">لا يوجد إثبات دفع</div>}
-                        </div>
-                        <div className="md:w-1/2 flex flex-col justify-between gap-4">
-                          <div className="space-y-3">
-                            <div className="flex justify-between"><span className="text-muted-foreground text-sm">المبلغ:</span><span className="font-bold text-green-500 text-2xl">{t.amount_usdt} USDT</span></div>
-                            <div className="flex justify-between"><span className="text-muted-foreground text-sm">Account ID:</span><span className="font-mono text-xs bg-muted px-2 py-1 rounded font-bold">{t.user_id.slice(0, 8).toUpperCase()}</span></div>
-                            <div className="flex justify-between"><span className="text-muted-foreground text-sm">التاريخ:</span><span className="text-xs">{new Date(t.created_at).toLocaleString("ar")}</span></div>
-                          </div>
-                          <div className="flex gap-3">
-                            <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white h-12 font-bold" onClick={() => openApproveDialog(t)}><CheckCircle className="w-5 h-5 mr-2" /> قبول</Button>
-                            <Button className="flex-1 h-12 font-bold" variant="destructive" onClick={() => handleReject(t.id)}><XCircle className="w-5 h-5 mr-2" /> رفض</Button>
-                          </div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-            {pendingTopups.length === 0 && <Card className="border-dashed"><CardContent className="p-8 text-center text-muted-foreground">✅ لا توجد طلبات شحن في الانتظار</CardContent></Card>}
-            {otherTopups.length > 0 && (
-              <Card>
-                <CardHeader><CardTitle>سجل الشحنات</CardTitle></CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader><TableRow><TableHead>Account ID</TableHead><TableHead>المبلغ</TableHead><TableHead>الحالة</TableHead><TableHead>التاريخ</TableHead></TableRow></TableHeader>
-                    <TableBody>
-                      {otherTopups.map((t) => (
-                        <TableRow key={t.id}>
-                          <TableCell className="font-mono text-xs font-bold">{t.user_id.slice(0, 8).toUpperCase()}</TableCell>
-                          <TableCell className="font-bold">{t.amount_usdt} USDT</TableCell>
-                          <TableCell><Badge variant={t.status === "confirmed" ? "default" : "destructive"}>{t.status === "confirmed" ? "✅ مقبول" : "❌ مرفوض"}</Badge></TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{new Date(t.created_at).toLocaleString("ar")}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            )}
-          </div>
+      <div className="max-w-md mx-auto px-4 py-5 space-y-5">
+        {isAdmin && (
+          <Link to="/admin">
+            <Card className="shadow-md border-0 bg-destructive/10 cursor-pointer hover:bg-destructive/20 transition-colors">
+              <CardContent className="p-4 flex items-center gap-3">
+                <Shield className="w-5 h-5 text-destructive" />
+                <span className="text-sm font-bold text-destructive">{isAr ? "لوحة تحكم المشرف" : "Go to Admin Dashboard"}</span>
+              </CardContent>
+            </Card>
+          </Link>
         )}
 
-        {/* WITHDRAWALS TAB */}
-        {activeTab === "withdrawals" && (
-          <div className="space-y-6">
-            {pendingWithdrawals.length > 0 && (
-              <div className="space-y-4">
-                <h2 className="text-lg font-bold text-orange-500">⏳ طلبات السحب في الانتظار ({pendingWithdrawals.length})</h2>
-                {pendingWithdrawals.map((w) => (
-                  <Card key={w.id} className="border-orange-500/40">
-                    <CardContent className="p-5">
-                      <div className="flex flex-col md:flex-row justify-between gap-4">
-                        <div className="space-y-2">
-                          <div className="flex justify-between gap-8"><span className="text-muted-foreground text-sm">Account ID:</span><span className="font-mono text-sm font-bold">{w.user_id.slice(0, 8).toUpperCase()}</span></div>
-                          <div className="flex justify-between gap-8"><span className="text-muted-foreground text-sm">المبلغ:</span><span className="font-bold text-red-500 text-xl">{w.amount} USDT</span></div>
-                          <div className="flex justify-between gap-8"><span className="text-muted-foreground text-sm">الطريقة:</span><span className="font-mono text-xs bg-muted px-2 py-1 rounded">{w.method}</span></div>
-                          <div className="flex justify-between gap-8"><span className="text-muted-foreground text-sm">المحفظة:</span><span className="font-mono text-xs bg-blue-50 px-2 py-1 rounded text-blue-700 break-all">{w.wallet_address || "—"}</span></div>
-                          <div className="flex justify-between gap-8"><span className="text-muted-foreground text-sm">التاريخ:</span><span className="text-xs">{new Date(w.created_at).toLocaleString("ar")}</span></div>
-                        </div>
-                        <div className="flex gap-3 items-end">
-                          <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white h-12 font-bold" onClick={() => handleApproveWithdraw(w)}><CheckCircle className="w-5 h-5 mr-2" /> تأكيد</Button>
-                          <Button className="flex-1 h-12 font-bold" variant="destructive" onClick={() => handleRejectWithdraw(w)}><XCircle className="w-5 h-5 mr-2" /> رفض</Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+        <Card className="shadow-md border-0 overflow-hidden">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-4 mb-4">
+              <Avatar className="w-16 h-16 bg-muted">
+                <AvatarFallback className="text-2xl bg-primary/10 text-primary">
+                  <User className="w-8 h-8" />
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-muted-foreground">{isAr ? "رقم الحساب" : "Account ID"}</p>
+                <p className="text-sm font-bold text-foreground">{userId}</p>
+                <p className="text-xs text-muted-foreground mt-1">{isAr ? "البريد" : "Email"}</p>
+                <p className="text-sm font-bold text-foreground truncate">{userEmail}</p>
+                <p className="text-xs text-muted-foreground mt-1">{isAr ? "مستوى المتجر" : "Store Level"}</p>
+                <p className="text-sm font-semibold text-primary">
+                  {isAr ? (storeLevelAr[storeData.store_level] || storeData.store_level) : storeData.store_level}
+                </p>
               </div>
-            )}
-            {pendingWithdrawals.length === 0 && <Card className="border-dashed"><CardContent className="p-8 text-center text-muted-foreground">✅ لا توجد طلبات سحب في الانتظار</CardContent></Card>}
-            {otherWithdrawals.length > 0 && (
-              <Card>
-                <CardHeader><CardTitle>سجل السحبات</CardTitle></CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader><TableRow><TableHead>Account ID</TableHead><TableHead>المبلغ</TableHead><TableHead>الطريقة</TableHead><TableHead>المحفظة</TableHead><TableHead>الحالة</TableHead><TableHead>التاريخ</TableHead></TableRow></TableHeader>
-                    <TableBody>
-                      {otherWithdrawals.map((w) => (
-                        <TableRow key={w.id}>
-                          <TableCell className="font-mono text-xs font-bold">{w.user_id.slice(0, 8).toUpperCase()}</TableCell>
-                          <TableCell className="font-bold text-red-500">{w.amount} USDT</TableCell>
-                          <TableCell className="text-xs">{w.method}</TableCell>
-                          <TableCell className="font-mono text-xs max-w-[120px] truncate">{w.wallet_address || "—"}</TableCell>
-                          <TableCell><Badge variant={w.status === "confirmed" ? "default" : "destructive"}>{w.status === "confirmed" ? "✅ مؤكد" : "❌ مرفوض"}</Badge></TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{new Date(w.created_at).toLocaleString("ar")}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        )}
+            </div>
+            <div className="bg-muted/50 rounded-xl p-3 text-center">
+              <p className="text-xs text-muted-foreground">{isAr ? "رصيد المتجر" : "My Store Credit"}</p>
+              <p className="text-3xl font-bold text-foreground tabular-nums">{liveBalance.toFixed(6)} USDT</p>
+              {packActive && <p className="text-xs text-green-500 mt-1">📈 {isAr ? "الربح يتزاد الآن" : "Earning now..."}</p>}
+            </div>
+          </CardContent>
+        </Card>
 
-        {/* UPGRADES TAB */}
-        {activeTab === "upgrades" && (
-          <div className="space-y-4">
-            {upgrades.filter(u => u.status === "pending").length > 0 && (
-              <div className="space-y-3">
-                <h2 className="text-lg font-bold text-purple-500">⬆️ طلبات الترقية في الانتظار</h2>
-                {upgrades.filter(u => u.status === "pending").map((u) => (
-                  <Card key={u.id} className="border-purple-500/40">
-                    <CardContent className="p-4 space-y-3">
-                      <div className="flex justify-between"><span className="text-muted-foreground text-sm">Account ID:</span><span className="font-mono text-sm font-bold">{u.user_id.slice(0, 8).toUpperCase()}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground text-sm">من:</span><span className="font-bold text-sm">{u.current_pack}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground text-sm">إلى:</span><span className="font-bold text-sm text-purple-500">{u.requested_pack}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground text-sm">المبلغ:</span><span className="font-bold text-green-500">${u.amount_to_pay}</span></div>
-                      <div className="flex gap-3">
-                        <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white h-10 font-bold" onClick={() => handleApproveUpgrade(u)}><CheckCircle className="w-4 h-4 mr-2" /> قبول</Button>
-                        <Button className="flex-1 h-10 font-bold" variant="destructive" onClick={() => handleRejectUpgrade(u.id)}><XCircle className="w-4 h-4 mr-2" /> رفض</Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+        {referralCode && (
+          <Card className="shadow-md border-0 bg-primary text-primary-foreground">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm opacity-80">{isAr ? "رمز الدعوة" : "Referral Code"}</span>
+                <span className="text-xl font-bold tracking-widest font-mono">{referralCode}</span>
+                <Button size="sm" variant="secondary" onClick={copyCode} className="h-8 px-3">
+                  {copiedCode ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span className="mr-1 text-xs">{isAr ? "نسخ" : "Copy"}</span>
+                </Button>
               </div>
-            )}
-            {upgrades.filter(u => u.status === "pending").length === 0 && (
-              <Card className="border-dashed"><CardContent className="p-8 text-center text-muted-foreground">✅ لا توجد طلبات ترقية في الانتظار</CardContent></Card>
-            )}
-            {upgrades.filter(u => u.status !== "pending").length > 0 && (
-              <Card>
-                <CardHeader><CardTitle>سجل الترقيات</CardTitle></CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader><TableRow><TableHead>Account ID</TableHead><TableHead>من</TableHead><TableHead>إلى</TableHead><TableHead>المبلغ</TableHead><TableHead>الحالة</TableHead></TableRow></TableHeader>
-                    <TableBody>
-                      {upgrades.filter(u => u.status !== "pending").map((u) => (
-                        <TableRow key={u.id}>
-                          <TableCell className="font-mono text-xs font-bold">{u.user_id.slice(0, 8).toUpperCase()}</TableCell>
-                          <TableCell className="text-xs">{u.current_pack}</TableCell>
-                          <TableCell className="text-xs font-bold text-purple-500">{u.requested_pack}</TableCell>
-                          <TableCell className="font-bold">${u.amount_to_pay}</TableCell>
-                          <TableCell><Badge variant={u.status === "confirmed" ? "default" : "destructive"}>{u.status === "confirmed" ? "✅ مقبول" : "❌ مرفوض"}</Badge></TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        )}
-
-        {/* USERS TAB */}
-        {activeTab === "users" && (
-          <Card>
-            <CardHeader><CardTitle>المستخدمون ({users.length})</CardTitle></CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Account ID</TableHead>
-                    <TableHead>رمز الدعوة</TableHead>
-                    <TableHead>المستوى</TableHead>
-                    <TableHead>الرصيد</TableHead>
-                    <TableHead>الإجمالي</TableHead>
-                    <TableHead>الرفيرالز</TableHead>
-                    <TableHead>إجراءات</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {users.map((u) => (
-                    <TableRow key={u.user_id}>
-                      <TableCell className="font-mono text-sm font-bold">{u.user_id.slice(0, 8).toUpperCase()}</TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{u.referral_code || "—"}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs">{u.store_level}</span>
-                          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => openLevelDialog(u)}><Edit className="w-3 h-3" /></Button>
-                        </div>
-                      </TableCell>
-                      <TableCell className="font-bold text-green-500">{u.balance} $</TableCell>
-                      <TableCell className="text-sm">{u.total_topup} $</TableCell>
-                      <TableCell>
-                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1" onClick={() => openReferralDialog(u)}>
-                          <Users className="w-3 h-3" />
-                          <span className="text-blue-500 font-bold">{u.referral_count}</span>
-                          <span className="text-muted-foreground">|</span>
-                          <span className="text-green-500 font-bold">{u.paid_referrals} خلصو</span>
-                        </Button>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white h-8 px-2" onClick={() => openBalanceDialog(u, "add")}><Plus className="w-3 h-3" /></Button>
-                          <Button size="sm" variant="destructive" className="h-8 px-2" onClick={() => openBalanceDialog(u, "subtract")}><Minus className="w-3 h-3" /></Button>
-                          <Button size="sm" variant="outline" className="h-8 px-2 text-xs" onClick={() => { setSelectedUserId(u.user_id); setManualAmount(""); setManualTxid(""); setManualDialogOpen(true); }}>+ شحن</Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs opacity-70 truncate flex-1">{referralLink}</span>
+                <Button size="sm" variant="secondary" onClick={copyLink} className="h-8 px-3 flex-shrink-0">
+                  {copiedLink ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span className="mr-1 text-xs">{isAr ? "نسخ" : "Copy"}</span>
+                </Button>
+              </div>
             </CardContent>
           </Card>
         )}
-      </div>
 
-      {/* Referral Dialog */}
-      <Dialog open={referralDialogOpen} onOpenChange={setReferralDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>رفيرالز {selectedUserName}</DialogTitle></DialogHeader>
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {selectedUserReferrals.length === 0 ? <p className="text-center text-muted-foreground py-4">لا يوجد رفيرالز بعد</p> : (
-              <>
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  <div className="bg-muted rounded-xl p-3 text-center"><p className="text-xs text-muted-foreground">إجمالي</p><p className="text-xl font-bold">{selectedUserReferrals.length}</p></div>
-                  <div className="bg-green-50 rounded-xl p-3 text-center"><p className="text-xs text-muted-foreground">خلصو</p><p className="text-xl font-bold text-green-600">{selectedUserReferrals.filter(r => r.total_topup > 0).length}</p></div>
-                  <div className="bg-blue-50 rounded-xl p-3 text-center"><p className="text-xs text-muted-foreground">عمولة</p><p className="text-lg font-bold text-blue-600">{selectedUserReferrals.filter(r => r.total_topup > 0).length * REFERRAL_COMMISSION} $</p></div>
+        <div className="grid grid-cols-4 gap-3">
+          {quickActions.map((action) => {
+            const content = (
+              <div className="flex flex-col items-center gap-1.5 py-3 cursor-pointer">
+                <div className={`w-12 h-12 rounded-2xl ${action.bg} flex items-center justify-center`}>
+                  <action.icon className={`w-6 h-6 ${action.color}`} />
                 </div>
-                <Table>
-                  <TableHeader><TableRow><TableHead>Account ID</TableHead><TableHead>المستوى</TableHead><TableHead>إجمالي الشحن</TableHead><TableHead>الحالة</TableHead></TableRow></TableHeader>
-                  <TableBody>
-                    {selectedUserReferrals.map((r) => (
-                      <TableRow key={r.user_id}>
-                        <TableCell className="font-mono text-xs font-bold">{r.user_id.slice(0, 8).toUpperCase()}</TableCell>
-                        <TableCell className="text-xs">{r.store_level}</TableCell>
-                        <TableCell className="font-bold text-sm">{r.total_topup} $</TableCell>
-                        <TableCell><Badge variant={r.total_topup > 0 ? "default" : "secondary"}>{r.total_topup > 0 ? "✅ نشط" : "⏳ لم يخلص"}</Badge></TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </>
+                <span className="text-xs font-medium text-foreground text-center leading-tight">{action.label}</span>
+              </div>
+            );
+            return action.to ? <Link key={action.label} to={action.to}>{content}</Link> : <div key={action.label}>{content}</div>;
+          })}
+        </div>
+
+        <Card className="shadow-md border-0">
+          <CardContent className="p-4 space-y-3">
+            <h3 className="text-sm font-bold text-foreground">{isAr ? "بيانات المتجر" : "Store Data"}</h3>
+            <div className="flex items-center justify-between py-2 border-b border-border/50">
+              <span className="text-sm text-muted-foreground">{isAr ? "إجمالي الشحن" : "Total Topup"}</span>
+              <span className="text-sm font-bold">{storeData.total_topup.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-border/50">
+              <span className="text-sm text-muted-foreground">{isAr ? "إجمالي الأرباح" : "Total Profit"}</span>
+              <span className="text-sm font-bold text-green-500 tabular-nums">
+                {storeData.total_topup > 0 ? liveProfit.toFixed(6) : "0.000000"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between py-2">
+              <span className="text-sm text-muted-foreground">{isAr ? "أرباح الفريق" : "Team Earnings"}</span>
+              <span className="text-sm font-bold">{storeData.team_earnings.toFixed(2)}</span>
+            </div>
+
+            {storeData.total_topup > 0 && (
+              packActive ? (
+                <div className="bg-green-50 rounded-xl p-3 text-center">
+                  <p className="text-xs text-green-600 font-medium">
+                    📈 {isAr ? "معدل الربح اليومي" : "Daily rate"}:{" "}
+                    <span className="font-bold">~${((PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400).toFixed(2)}/day</span>
+                  </p>
+                  <p className="text-xs text-green-500 mt-1">✅ {isAr ? "الباقة نشطة" : "Pack is active"}</p>
+                </div>
+              ) : (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+                  <p className="text-xs text-red-600 font-bold">
+                    ⛔ {isAr ? "الباقة موقوفة — الربح متوقف" : "Pack stopped — earning paused"}
+                  </p>
+                  <Link to="/topup" className="inline-block mt-2 bg-red-500 text-white text-xs font-bold px-4 py-1.5 rounded-full">
+                    {isAr ? "اشحن لإعادة التفعيل" : "Top up to reactivate"} →
+                  </Link>
+                </div>
+              )
             )}
-          </div>
-          <DialogFooter><Button variant="outline" onClick={() => setReferralDialogOpen(false)}>إغلاق</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </CardContent>
+        </Card>
 
-      {/* Approve Topup Dialog */}
-      <Dialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>تأكيد الموافقة</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="bg-blue-50 rounded-xl p-3 text-sm text-blue-700">🎁 سيتم إضافة <strong>${REFERRAL_COMMISSION}</strong> تلقائياً للمحيل</div>
-            <div><Label>المبلغ (USDT)</Label><Input type="number" value={editedAmount} onChange={e => setEditedAmount(e.target.value)} /></div>
-            {selectedTopup?.screenshot_url && <img src={selectedTopup.screenshot_url} alt="إثبات" className="w-full rounded-xl border max-h-48 object-contain" />}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setApproveDialogOpen(false)}>إلغاء</Button>
-            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={handleApprove} disabled={submitting}>{submitting ? "جاري..." : "✅ موافقة"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <Card className="shadow-md border-0">
+          <CardContent className="p-4">
+            <div className="flex gap-2">
+              <Input type="date" value={searchDate} onChange={(e) => setSearchDate(e.target.value)} className="flex-1" />
+              <Button size="sm" className="bg-primary text-primary-foreground px-4">
+                <Search className="w-4 h-4 mr-1" />
+                {isAr ? "بحث" : "Search"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
-      {/* Balance Dialog */}
-      <Dialog open={balanceDialogOpen} onOpenChange={setBalanceDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{balanceAction === "add" ? "➕ إضافة رصيد" : "➖ خصم رصيد"}</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-2">
-            <p className="text-sm text-muted-foreground">الرصيد الحالي: <span className="font-bold text-green-500">{selectedUser?.balance} $</span></p>
-            <div><Label>المبلغ ($)</Label><Input type="number" placeholder="مثال: 50" value={balanceAmount} onChange={e => setBalanceAmount(e.target.value)} /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBalanceDialogOpen(false)}>إلغاء</Button>
-            <Button className={balanceAction === "add" ? "bg-green-600 hover:bg-green-700 text-white" : ""} variant={balanceAction === "subtract" ? "destructive" : "default"} onClick={handleBalanceUpdate}>{balanceAction === "add" ? "إضافة" : "خصم"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Level Dialog */}
-      <Dialog open={levelDialogOpen} onOpenChange={setLevelDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>تغيير مستوى المتجر</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-2">
-            <Label>اختر المستوى</Label>
-            <Select value={selectedLevel} onValueChange={setSelectedLevel}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{STORE_LEVELS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setLevelDialogOpen(false)}>إلغاء</Button>
-            <Button onClick={handleLevelUpdate}>حفظ</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Manual Topup Dialog */}
-      <Dialog open={manualDialogOpen} onOpenChange={setManualDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>شحن يدوي</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-2">
-            <div><Label>معرف المعاملة (TXID)</Label><Input placeholder="أدخل TXID" value={manualTxid} onChange={e => setManualTxid(e.target.value)} /></div>
-            <div><Label>المبلغ (USDT)</Label><Input type="number" placeholder="مثال: 50" value={manualAmount} onChange={e => setManualAmount(e.target.value)} /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setManualDialogOpen(false)}>إلغاء</Button>
-            <Button onClick={handleManualTopup} disabled={submitting}>{submitting ? "جاري..." : "تأكيد"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <div className="space-y-2">
+          {bottomLinks.map((link) => (
+            <Card key={link.label} className="shadow-sm border-0 cursor-pointer hover:bg-muted/50 transition-colors">
+              <CardContent className="p-4 flex items-center gap-3">
+                <link.icon className="w-5 h-5 text-primary" />
+                <span className="text-sm font-medium text-foreground">{link.label}</span>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
     </div>
   );
 };
 
-export default Admin;
+export default Dashboard;

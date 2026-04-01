@@ -108,14 +108,7 @@ const Admin = () => {
         await supabase.from("user_stores").update({ balance: Number(store.balance) - Number(upgrade.amount_to_pay) }).eq("user_id", upgrade.user_id);
       }
       await supabase.from("pack_upgrades").update({ status: "confirmed" }).eq("id", upgrade.id);
-      // Send notification with topup link
-      await supabase.from("notifications").insert({
-        user_id: upgrade.user_id,
-        message: `⬆️ تمت الموافقة على ترقيتك إلى ${upgrade.requested_pack}! يرجى دفع $${upgrade.amount_to_pay} لتفعيل الباقة الجديدة`,
-        type: "upgrade",
-        link: `/topup?amount=${upgrade.amount_to_pay}&plan=${encodeURIComponent(upgrade.requested_pack)}`,
-      });
-      toast.success(`✅ تمت الترقية لـ ${upgrade.requested_pack} وتم إرسال إشعار للمستخدم`);
+      toast.success(`✅ تمت الترقية لـ ${upgrade.requested_pack}`);
       await loadAll();
     } catch (err) { toast.error(err.message || "حدث خطأ"); }
   };

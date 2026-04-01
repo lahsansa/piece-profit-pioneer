@@ -51,8 +51,12 @@ const storePlans = [
 ];
 
 const PACK_NAME_MAP: Record<string, string> = {
-  "small": "Small shop", "medium": "Medium shop", "large": "Large shop",
-  "xl": "Mega shop", "premium": "VIP", "investor": "VIP",
+  "small":    "Small shop",
+  "medium":   "Medium shop",
+  "large":    "Large shop",
+  "xl":       "Mega shop",
+  "premium":  "Premium shop",
+  "investor": "Investor shop",
 };
 
 const StoreLevels = () => {

@@ -13,7 +13,7 @@ import { toast } from "sonner";
 
 const ADMIN_USERNAME = "hassan";
 const ADMIN_PASSWORD = "hassan";
-const STORE_LEVELS = ["Small shop", "Medium shop", "Large shop", "Mega shop", "VIP"];
+const STORE_LEVELS = ["Small shop", "Medium shop", "Large shop", "Mega shop", "Premium shop", "Investor shop"];
 const REFERRAL_COMMISSION = 5;
 
 const Admin = () => {

@@ -79,30 +79,17 @@ const StoreLevels = () => {
 
   const handleUpgrade = async (plan: typeof storePlans[0]) => {
     const packName = PACK_NAME_MAP[plan.id];
-    
-    // If no current pack → go to topup
     if (!currentPack) {
       navigate(`/topup?amount=${plan.price}&plan=${encodeURIComponent(plan.nameAr)}`);
       return;
     }
+    if (packName === currentPack) { toast.info("هذه هي باقتك الحالية"); return; }
+    if (plan.price <= currentPrice) { toast.error("لا يمكن الترقية لباقة أقل"); return; }
 
-    // If same pack → already active
-    if (packName === currentPack) {
-      toast.info("هذه هي باقتك الحالية");
-      return;
-    }
-
-    // If lower pack → can't downgrade
-    if (plan.price <= currentPrice) {
-      toast.error("لا يمكن الترقية لباقة أقل");
-      return;
-    }
-
-    // Upgrade request
     const diff = plan.price - currentPrice;
     setLoading(true);
     try {
-      navigate(`/topup?amount=${diff}&plan=${encodeURIComponent(plan.nameAr)}&upgrade=true&from=${encodeURIComponent(currentPack)}&to=${encodeURIComponent(packName)}`);
+      const { error } = await supabase.from("pack_upgrades").insert({
         user_id: userId,
         current_pack: currentPack,
         requested_pack: packName,
@@ -147,17 +134,13 @@ const StoreLevels = () => {
           const Icon = plan.icon;
           const packName = PACK_NAME_MAP[plan.id];
           const isCurrentPack = packName === currentPack;
-          const isUpgrade = currentPack && plan.price > currentPrice;
+          const isUpgrade = !!currentPack && plan.price > currentPrice;
           const diff = plan.price - currentPrice;
 
           return (
-            <motion.div
-              key={plan.id}
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
+            <motion.div key={plan.id} initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.1, duration: 0.4 }}
-              className={`bg-white rounded-2xl shadow-md overflow-hidden border ${plan.borderColor} ${isCurrentPack ? "ring-2 ring-emerald-500" : ""}`}
-            >
+              className={`bg-white rounded-2xl shadow-md overflow-hidden border ${plan.borderColor} ${isCurrentPack ? "ring-2 ring-emerald-500" : ""}`}>
               <div className={`bg-gradient-to-r ${plan.color} px-4 py-3 flex items-center justify-between`}>
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
@@ -204,30 +187,21 @@ const StoreLevels = () => {
                 </div>
 
                 {isCurrentPack ? (
-                  <div className="w-full py-3.5 rounded-xl bg-emerald-100 text-emerald-700 font-bold text-base text-center">
-                    ✅ باقتك الحالية
-                  </div>
+                  <div className="w-full py-3.5 rounded-xl bg-emerald-100 text-emerald-700 font-bold text-base text-center">✅ باقتك الحالية</div>
                 ) : isUpgrade ? (
-                  <button
-                    onClick={() => handleUpgrade(plan)}
-                    disabled={loading}
-                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg flex items-center justify-center gap-2"
-                  >
+                  <button onClick={() => handleUpgrade(plan)} disabled={loading}
+                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg flex items-center justify-center gap-2">
                     <ArrowUp className="w-5 h-5" />
                     ترقية — ادفع ${diff} فقط
                   </button>
                 ) : currentPack && plan.price < currentPrice ? (
-                  <div className="w-full py-3.5 rounded-xl bg-gray-100 text-gray-400 font-bold text-base text-center cursor-not-allowed">
-                    🔒 لا يمكن التخفيض
-                  </div>
-                ) : !currentPack ? (
-                  <button
-                    onClick={() => navigate(`/topup?amount=${plan.price}&plan=${encodeURIComponent(plan.nameAr)}`)}
-                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg shadow-emerald-200"
-                  >
+                  <div className="w-full py-3.5 rounded-xl bg-gray-100 text-gray-400 font-bold text-base text-center cursor-not-allowed">🔒 لا يمكن التخفيض</div>
+                ) : (
+                  <button onClick={() => navigate(`/topup?amount=${plan.price}&plan=${encodeURIComponent(plan.nameAr)}`)}
+                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg shadow-emerald-200">
                     قم بالتفعيل الآن — ${plan.price} USDT 🚀
                   </button>
-                ) : null}
+                )}
               </div>
             </motion.div>
           );
@@ -235,9 +209,7 @@ const StoreLevels = () => {
       </div>
 
       <div className="max-w-md mx-auto px-4 pb-2">
-        <p className="text-center text-xs text-gray-400">
-          * الأرقام تقديرية بناءً على أداء السوق. النتائج الفعلية قد تتفاوت.
-        </p>
+        <p className="text-center text-xs text-gray-400">* الأرقام تقديرية بناءً على أداء السوق. النتائج الفعلية قد تتفاوت.</p>
       </div>
     </div>
   );

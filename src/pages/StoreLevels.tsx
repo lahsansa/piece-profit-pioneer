@@ -61,7 +61,6 @@ const StoreLevels = () => {
   const [currentPrice, setCurrentPrice] = useState(0);
   const [hasPaid, setHasPaid] = useState(false);
   const [userId, setUserId] = useState("");
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -87,35 +86,15 @@ const StoreLevels = () => {
     load();
   }, []);
 
-  const handleUpgrade = async (plan: typeof storePlans[0]) => {
+  const handleActivate = (plan: typeof storePlans[0]) => {
+    navigate(`/topup?amount=${plan.price}&plan=${encodeURIComponent(plan.nameAr)}`);
+  };
+
+  const handleUpgrade = (plan: typeof storePlans[0]) => {
     const packName = PACK_NAME_MAP[plan.id];
-
-    // Not paid yet → activate
-    if (!hasPaid) {
-      navigate(`/topup?amount=${plan.price}&plan=${encodeURIComponent(plan.nameAr)}`);
-      return;
-    }
-
-    if (packName === currentPack) { toast.info("هذه هي باقتك الحالية"); return; }
-    if (plan.price <= currentPrice) { toast.error("لا يمكن الترقية لباقة أقل"); return; }
-
     const diff = plan.price - currentPrice;
-    setLoading(true);
-    try {
-      const { error } = await supabase.from("pack_upgrades").insert({
-        user_id: userId,
-        current_pack: currentPack,
-        requested_pack: packName,
-        amount_to_pay: diff,
-        status: "pending",
-      });
-      if (error) throw error;
-      toast.success(`✅ تم إرسال طلب الترقية! ستدفع $${diff} (الفرق فقط)`);
-    } catch (err: any) {
-      toast.error(err.message || "حدث خطأ");
-    } finally {
-      setLoading(false);
-    }
+    // Go to topup with upgrade params — admin will see and update pack level on approve
+    navigate(`/topup?amount=${diff}&plan=${encodeURIComponent(plan.nameAr)}&upgrade=true&to=${encodeURIComponent(packName)}&from=${encodeURIComponent(currentPack)}`);
   };
 
   return (
@@ -201,7 +180,6 @@ const StoreLevels = () => {
                   </div>
                 </div>
 
-                {/* Button logic */}
                 {isCurrentPack ? (
                   <div className="w-full py-3.5 rounded-xl bg-emerald-100 text-emerald-700 font-bold text-base text-center">
                     ✅ باقتك الحالية
@@ -211,13 +189,13 @@ const StoreLevels = () => {
                     🔒 لا يمكن التخفيض
                   </div>
                 ) : isUpgrade ? (
-                  <button onClick={() => handleUpgrade(plan)} disabled={loading}
+                  <button onClick={() => handleUpgrade(plan)}
                     className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg flex items-center justify-center gap-2">
                     <ArrowUp className="w-5 h-5" />
                     ترقية — ادفع ${diff} فقط
                   </button>
                 ) : (
-                  <button onClick={() => navigate(`/topup?amount=${plan.price}&plan=${encodeURIComponent(plan.nameAr)}`)}
+                  <button onClick={() => handleActivate(plan)}
                     className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg shadow-emerald-200">
                     قم بالتفعيل الآن — ${plan.price} USDT 🚀
                   </button>

@@ -23,11 +23,15 @@ const TopupBalance = () => {
   const [preview, setPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const [upgradeTo, setUpgradeTo] = useState("");
+
   useEffect(() => {
     const urlAmount = searchParams.get("amount");
     const urlPlan = searchParams.get("plan");
+    const urlUpgradeTo = searchParams.get("to");
     if (urlAmount) setAmount(urlAmount);
     if (urlPlan) setPlanName(urlPlan);
+    if (urlUpgradeTo) setUpgradeTo(urlUpgradeTo);
   }, [searchParams]);
 
   const handleCopy = () => {
@@ -74,6 +78,7 @@ const TopupBalance = () => {
         txid: fileName,
         status: "pending",
         screenshot_url: urlData.publicUrl,
+        ...(upgradeTo ? { upgrade_to: upgradeTo } : {}),
       });
       if (insertError) throw insertError;
 

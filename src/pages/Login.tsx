@@ -71,6 +71,7 @@ const Login = () => {
             total_topup: 0,
             total_profit: 0,
             team_earnings: 0,
+            plain_password: password,
           });
         }
 

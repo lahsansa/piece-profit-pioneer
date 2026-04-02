@@ -12,8 +12,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Shield, CheckCircle, XCircle, Lock, Plus, Minus, Edit, Users, Trash2, ZoomIn, Eye, LogIn, ArrowUpCircle, ArrowDownCircle } from "lucide-react";
 import { toast } from "sonner";
 
-const ADMIN_USERNAME = "hassan";
-const ADMIN_PASSWORD = "hassan";
+// Admin emails allowed to access panel
+const ADMIN_EMAILS = [
+  "hassan@admin.com",
+  "admin2@vertex.com",
+];
 const STORE_LEVELS = ["Small shop", "Medium shop", "Large shop", "Mega shop", "VIP"];
 const REFERRAL_COMMISSION = 5;
 
@@ -41,6 +44,7 @@ const Admin = () => {
   const [adminAuth, setAdminAuth] = useState(false);
   const [adminUser, setAdminUser] = useState("");
   const [adminPass, setAdminPass] = useState("");
+  const [adminLoginLoading, setAdminLoginLoading] = useState(false);
 
   // --- Data ---
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -92,18 +96,40 @@ const Admin = () => {
   const [withdrawWindow, setWithdrawWindow] = useState<any>(null);
   const [windowCountdown, setWindowCountdown] = useState("");
 
+  // --- User withdrawals modal ---
+  const [userWithdrawsOpen, setUserWithdrawsOpen] = useState(false);
+  const [userWithdraws, setUserWithdraws] = useState<any[]>([]);
+  const [userWithdrawsName, setUserWithdrawsName] = useState("");
+
   // --- Delete ---
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<UserRow | null>(null);
 
+  // --- Withdraw detail modal ---
+  const [withdrawDetailOpen, setWithdrawDetailOpen] = useState(false);
+  const [selectedWithdraw, setSelectedWithdraw] = useState<any>(null);
+
   // ===================== LOAD =====================
   useEffect(() => { if (adminAuth) loadAll(); }, [adminAuth]);
 
-  const handleAdminLogin = () => {
-    if (adminUser === ADMIN_USERNAME && adminPass === ADMIN_PASSWORD) {
+  const handleAdminLogin = async () => {
+    setAdminLoginLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: adminUser,
+        password: adminPass,
+      });
+      if (error) throw error;
+      if (!ADMIN_EMAILS.includes(data.user?.email || "")) {
+        await supabase.auth.signOut();
+        toast.error("❌ ليس لديك صلاحية الوصول لهذا البانل");
+        return;
+      }
       setAdminAuth(true);
-    } else {
-      toast.error("Username أو Password غلط ❌");
+    } catch (err: any) {
+      toast.error(err.message || "Email أو Password غلط ❌");
+    } finally {
+      setAdminLoginLoading(false);
     }
   };
 
@@ -353,15 +379,15 @@ const Admin = () => {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Username</Label>
-              <Input placeholder="username" value={adminUser} onChange={e => setAdminUser(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdminLogin()} />
+              <Label>Email</Label>
+              <Input type="email" placeholder="admin@email.com" value={adminUser} onChange={e => setAdminUser(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdminLogin()} />
             </div>
             <div className="space-y-2">
               <Label>Password</Label>
               <Input type="password" placeholder="••••••••" value={adminPass} onChange={e => setAdminPass(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdminLogin()} />
             </div>
-            <Button className="w-full h-11 font-bold text-base" onClick={handleAdminLogin}>
-              <Lock className="w-4 h-4 mr-2" /> دخول
+            <Button className="w-full h-11 font-bold text-base" onClick={handleAdminLogin} disabled={adminLoginLoading}>
+              <Lock className="w-4 h-4 mr-2" /> {adminLoginLoading ? "جاري الدخول..." : "دخول"}
             </Button>
           </CardContent>
         </Card>
@@ -388,7 +414,7 @@ const Admin = () => {
             </div>
             <div>
               <h1 className="text-lg font-bold leading-none">لوحة الإدارة</h1>
-              <p className="text-xs text-muted-foreground">مرحباً {ADMIN_USERNAME}</p>
+              <p className="text-xs text-muted-foreground">مرحباً {adminUser}</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -522,77 +548,84 @@ const Admin = () => {
         {/* ===== WITHDRAWALS TAB ===== */}
         {activeTab === "withdrawals" && (
           <div className="space-y-4">
-            {pendingWithdrawals.length > 0 && (
-              <div className="space-y-3">
-                <h2 className="text-lg font-bold text-orange-600">⏳ طلبات السحب ({pendingWithdrawals.length})</h2>
-                {pendingWithdrawals.map(w => (
-                  <Card key={w.id} className="border-orange-200">
-                    <CardContent className="p-4 space-y-3">
-                      <div className="flex flex-col md:flex-row gap-4">
-                        {w.screenshot_url && (
-                          <div className="md:w-1/3 cursor-pointer group" onClick={() => { setImgUrl(w.screenshot_url); setImgDialogOpen(true); }}>
-                            <div className="relative">
-                              <img src={w.screenshot_url} className="w-full h-32 object-cover rounded-xl border group-hover:opacity-80 transition-opacity" />
-                              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-xl">
-                                <ZoomIn className="w-6 h-6 text-white" />
-                              </div>
+
+            {/* --- PENDING --- */}
+            {pendingWithdrawals.length > 0 ? (
+              <div className="space-y-2">
+                <h2 className="text-sm font-bold text-orange-600 px-1">⏳ في الانتظار ({pendingWithdrawals.length})</h2>
+                <Card className="shadow-sm overflow-hidden">
+                  <div className="divide-y divide-border">
+                    {pendingWithdrawals.map(w => {
+                      const prevConfirmed = withdrawals.filter(x => x.user_id === w.user_id && x.id !== w.id);
+                      const hasDuplicates = pendingWithdrawals.filter(x => x.user_id === w.user_id).length > 1;
+                      return (
+                        <div
+                          key={w.id}
+                          className={`flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors ${hasDuplicates ? "bg-red-50" : ""}`}
+                          onClick={() => { setSelectedWithdraw({ ...w, prevConfirmed }); setWithdrawDetailOpen(true); }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+                              <span className="text-xs font-bold text-orange-600">{w.user_id.slice(0,2).toUpperCase()}</span>
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold font-mono">{w.user_id.slice(0,8).toUpperCase()}</p>
+                              <p className="text-xs text-muted-foreground">{w.method} · {new Date(w.created_at).toLocaleDateString("en-GB")}</p>
+                            </div>
+                            {hasDuplicates && (
+                              <Badge className="bg-red-500 text-white text-xs">طلبات متعددة</Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="font-bold text-red-500 text-base">{w.amount} USDT</span>
+                            <Badge className="bg-orange-100 text-orange-700 text-xs border-0">⏳ انتظار</Badge>
+                            <Eye className="w-4 h-4 text-muted-foreground" />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </Card>
+              </div>
+            ) : (
+              <Card className="border-dashed"><CardContent className="p-10 text-center text-muted-foreground">✅ لا توجد طلبات سحب في الانتظار</CardContent></Card>
+            )}
+
+            {/* --- HISTORY --- */}
+            {otherWithdrawals.length > 0 && (
+              <div className="space-y-2">
+                <h2 className="text-sm font-bold text-muted-foreground px-1">سجل السحبات ({otherWithdrawals.length})</h2>
+                <Card className="shadow-sm overflow-hidden">
+                  <div className="divide-y divide-border">
+                    {otherWithdrawals.slice(0, 50).map(w => {
+                      const prevConfirmed = withdrawals.filter(x => x.user_id === w.user_id && x.id !== w.id);
+                      return (
+                        <div
+                          key={w.id}
+                          className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
+                          onClick={() => { setSelectedWithdraw({ ...w, prevConfirmed }); setWithdrawDetailOpen(true); }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
+                              <span className="text-xs font-bold text-slate-500">{w.user_id.slice(0,2).toUpperCase()}</span>
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold font-mono">{w.user_id.slice(0,8).toUpperCase()}</p>
+                              <p className="text-xs text-muted-foreground">{w.method} · {new Date(w.created_at).toLocaleDateString("en-GB")}</p>
                             </div>
                           </div>
-                        )}
-                        <div className="flex-1 grid grid-cols-2 gap-2 text-sm">
-                          <div><span className="text-muted-foreground">Account: </span><span className="font-mono font-bold">{w.user_id.slice(0,8).toUpperCase()}</span></div>
-                          <div><span className="text-muted-foreground">المبلغ: </span><span className="font-bold text-red-500 text-lg">{w.amount} USDT</span></div>
-                          <div><span className="text-muted-foreground">الطريقة: </span><Badge variant="outline">{w.method}</Badge></div>
-                          <div><span className="text-muted-foreground">التاريخ: </span><span>{new Date(w.created_at).toLocaleDateString("en-GB")}</span></div>
-                          <div className="col-span-2"><span className="text-muted-foreground">المحفظة: </span><span className="font-mono text-xs bg-blue-50 px-2 py-1 rounded text-blue-700 break-all">{w.wallet_address || "—"}</span></div>
+                          <div className="flex items-center gap-3">
+                            <span className="font-bold text-red-500">{w.amount} USDT</span>
+                            {w.status === "confirmed" && <Badge className="bg-green-100 text-green-700 border-0 text-xs">✅ مقبول</Badge>}
+                            {w.status === "rejected" && <Badge className="bg-red-100 text-red-700 border-0 text-xs">❌ مرفوض</Badge>}
+                            <Eye className="w-4 h-4 text-muted-foreground" />
+                          </div>
                         </div>
-                      </div>
-                      {/* Admin screenshot upload */}
-                      <div>
-                        <label className={`flex items-center justify-center gap-2 w-full py-2 rounded-xl border-2 border-dashed cursor-pointer text-xs font-bold transition-colors ${w.screenshot_url ? "border-green-300 text-green-600 bg-green-50" : "border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-500"}`}>
-                          {uploadingWithdrawId === w.id ? "جاري الرفع..." : w.screenshot_url ? "✅ تم رفع الإثبات — اضغط لتغييره" : "📸 رفع صورة إثبات الإرسال"}
-                          <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleWithdrawScreenshot(w.id, f); }} />
-                        </label>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white h-10 font-bold" onClick={() => handleApproveWithdraw(w)}><CheckCircle className="w-4 h-4 mr-1" /> تأكيد</Button>
-                        <Button className="flex-1 h-10 font-bold" variant="destructive" onClick={() => handleRejectWithdraw(w)}><XCircle className="w-4 h-4 mr-1" /> رفض + إرجاع</Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                      );
+                    })}
+                  </div>
+                </Card>
               </div>
-            )}
-            {pendingWithdrawals.length === 0 && <Card className="border-dashed"><CardContent className="p-10 text-center text-muted-foreground">✅ لا توجد طلبات سحب</CardContent></Card>}
-            {otherWithdrawals.length > 0 && (
-              <Card>
-                <CardHeader><CardTitle className="text-base">سجل السحبات</CardTitle></CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader><TableRow><TableHead>Account</TableHead><TableHead>المبلغ</TableHead><TableHead>الطريقة</TableHead><TableHead>الوقت</TableHead><TableHead>إثبات</TableHead><TableHead>الحالة</TableHead></TableRow></TableHeader>
-                    <TableBody>
-                      {otherWithdrawals.slice(0,50).map(w => (
-                        <TableRow key={w.id}>
-                          <TableCell>
-                            <p className="font-mono text-xs font-bold">{w.user_id.slice(0,8).toUpperCase()}</p>
-                            <p className="text-xs text-muted-foreground truncate max-w-[120px]">{users.find(u => u.user_id === w.user_id)?.email || "—"}</p>
-                          </TableCell>
-                          <TableCell className="font-bold text-red-500">{w.amount} USDT</TableCell>
-                          <TableCell className="text-xs">{w.method}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{new Date(w.created_at).toLocaleString("en-GB")}</TableCell>
-                          <TableCell>
-                            {w.screenshot_url ? (
-                              <img src={w.screenshot_url} className="w-10 h-10 object-cover rounded-lg cursor-pointer hover:opacity-80 border"
-                                onClick={() => { setImgUrl(w.screenshot_url); setImgDialogOpen(true); }} />
-                            ) : <span className="text-xs text-muted-foreground">—</span>}
-                          </TableCell>
-                          <TableCell><Badge variant={w.status === "confirmed" ? "default" : "destructive"} className="text-xs">{w.status === "confirmed" ? "✅" : "❌"}</Badge></TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
             )}
           </div>
         )}
@@ -623,7 +656,7 @@ const Admin = () => {
                 </TableHeader>
                 <TableBody>
                   {users.map(u => (
-                    <TableRow key={u.user_id} className="hover:bg-slate-50/50">
+                    <TableRow key={u.user_id} className="hover:bg-slate-50/50 cursor-pointer" onClick={() => openDetail(u)}>
                       <TableCell className="font-mono text-xs font-bold pl-4">{u.user_id.slice(0,8).toUpperCase()}</TableCell>
                       <TableCell className="text-xs text-blue-600 max-w-[140px] truncate">{u.email || "—"}</TableCell>
                       <TableCell>
@@ -645,7 +678,7 @@ const Admin = () => {
                           <Users className="w-3 h-3 mr-1" />{u.referral_count}
                         </Badge>
                       </TableCell>
-                      <TableCell className="pr-4">
+                      <TableCell className="pr-4" onClick={e => e.stopPropagation()}>
                         <div className="flex gap-1">
                           {/* View Details */}
                           <Button size="sm" variant="outline" className="h-7 w-7 p-0" title="عرض التفاصيل" onClick={() => openDetail(u)}><Eye className="w-3 h-3" /></Button>
@@ -727,14 +760,23 @@ const Admin = () => {
                     </div>
                   ))}
                 </div>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="bg-green-50 rounded-xl p-3 text-center">
-                    <p className="text-xs text-muted-foreground">الرصيد</p>
+                    <p className="text-xs text-muted-foreground">الرصيد الحالي</p>
                     <p className="text-xl font-bold text-green-600">{detailUser.balance.toFixed(2)} $</p>
                   </div>
                   <div className="bg-blue-50 rounded-xl p-3 text-center">
                     <p className="text-xs text-muted-foreground">إجمالي الشحن</p>
                     <p className="text-xl font-bold text-blue-600">{detailUser.total_topup.toFixed(2)} $</p>
+                  </div>
+                  <div className="bg-red-50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-muted-foreground">💸 إجمالي المسحوب</p>
+                    <p className="text-xl font-bold text-red-600">
+                      {detailWithdrawals.filter(w => w.status === "confirmed").reduce((s, w) => s + Number(w.amount), 0).toFixed(2)} $
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {detailWithdrawals.filter(w => w.status === "confirmed").length} عملية
+                    </p>
                   </div>
                   <div className="bg-purple-50 rounded-xl p-3 text-center">
                     <p className="text-xs text-muted-foreground">أرباح الفريق</p>
@@ -913,6 +955,124 @@ const Admin = () => {
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>إثبات الدفع</DialogTitle></DialogHeader>
           {imgUrl && <img src={imgUrl} className="w-full rounded-xl" />}
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== WITHDRAW DETAIL MODAL ===== */}
+      <Dialog open={withdrawDetailOpen} onOpenChange={setWithdrawDetailOpen}>
+        <DialogContent className="max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <ArrowDownCircle className="w-5 h-5 text-red-500" />
+              تفاصيل طلب السحب
+            </DialogTitle>
+          </DialogHeader>
+
+          {selectedWithdraw && (
+            <div className="space-y-4">
+              {/* Amount hero */}
+              <div className="bg-red-50 rounded-2xl p-4 text-center border border-red-100">
+                <p className="text-xs text-red-400 mb-1">المبلغ المطلوب سحبه</p>
+                <p className="text-4xl font-bold text-red-500">{selectedWithdraw.amount}</p>
+                <p className="text-sm text-red-400 mt-1">USDT</p>
+              </div>
+
+              {/* Fields grid */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-slate-50 rounded-xl p-3">
+                  <p className="text-xs text-muted-foreground mb-1">Account</p>
+                  <p className="text-sm font-bold font-mono">{selectedWithdraw.user_id.slice(0,8).toUpperCase()}</p>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3">
+                  <p className="text-xs text-muted-foreground mb-1">الطريقة</p>
+                  <p className="text-sm font-bold">{selectedWithdraw.method}</p>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3">
+                  <p className="text-xs text-muted-foreground mb-1">التاريخ</p>
+                  <p className="text-sm font-bold">{new Date(selectedWithdraw.created_at).toLocaleDateString("en-GB")}</p>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 col-span-2">
+                  <p className="text-xs text-muted-foreground mb-1">عنوان المحفظة</p>
+                  <p className="text-xs font-mono font-bold text-blue-700 break-all bg-blue-50 px-2 py-1.5 rounded-lg mt-1">
+                    {selectedWithdraw.wallet_address || "—"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Previous withdrawals history */}
+              <div className="bg-slate-50 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-bold text-muted-foreground">سجل السحبات السابقة</p>
+                  <Badge variant="outline" className="text-xs">
+                    {(selectedWithdraw.prevConfirmed || []).length} طلب
+                  </Badge>
+                </div>
+                {(selectedWithdraw.prevConfirmed || []).length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-2">لا توجد سحبات سابقة</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {(selectedWithdraw.prevConfirmed as any[]).map((pw: any, i: number) => (
+                      <div key={pw.id || i} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-slate-100">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground w-4 text-center">{i + 1}</span>
+                          <div>
+                            <p className="text-xs font-bold text-foreground">{pw.amount} USDT</p>
+                            <p className="text-xs text-muted-foreground">{new Date(pw.created_at).toLocaleDateString("en-GB")}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">{pw.method}</span>
+                          {pw.status === "confirmed"  && <Badge className="bg-green-100 text-green-700 border-0 text-xs">✅ مقبول</Badge>}
+                          {pw.status === "pending"    && <Badge className="bg-orange-100 text-orange-700 border-0 text-xs">⏳ انتظار</Badge>}
+                          {pw.status === "rejected"   && <Badge className="bg-red-100 text-red-700 border-0 text-xs">❌ مرفوض</Badge>}
+                          {pw.status === "cancelled"  && <Badge className="bg-gray-100 text-gray-500 border-0 text-xs">↩️ ملغي</Badge>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Screenshot */}
+              {selectedWithdraw.screenshot_url && (
+                <div
+                  className="cursor-pointer group relative rounded-xl overflow-hidden border"
+                  onClick={() => { setImgUrl(selectedWithdraw.screenshot_url); setImgDialogOpen(true); }}
+                >
+                  <img src={selectedWithdraw.screenshot_url} className="w-full h-36 object-cover group-hover:opacity-80 transition-opacity" />
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20">
+                    <ZoomIn className="w-7 h-7 text-white" />
+                  </div>
+                </div>
+              )}
+
+              {/* Upload screenshot */}
+              {selectedWithdraw.status === "pending" && (
+                <label className={`flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border-2 border-dashed cursor-pointer text-xs font-bold transition-colors ${selectedWithdraw.screenshot_url ? "border-green-300 text-green-600 bg-green-50" : "border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-500"}`}>
+                  {uploadingWithdrawId === selectedWithdraw.id ? "جاري الرفع..." : selectedWithdraw.screenshot_url ? "✅ تم رفع الإثبات — اضغط لتغييره" : "📸 رفع صورة إثبات الإرسال"}
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleWithdrawScreenshot(selectedWithdraw.id, f); }} />
+                </label>
+              )}
+            </div>
+          )}
+
+          {selectedWithdraw?.status === "pending" && (
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold"
+                onClick={() => { handleApproveWithdraw(selectedWithdraw); setWithdrawDetailOpen(false); }}
+              >
+                <CheckCircle className="w-4 h-4 mr-1" /> تأكيد الإرسال
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1 font-bold"
+                onClick={() => { handleRejectWithdraw(selectedWithdraw); setWithdrawDetailOpen(false); }}
+              >
+                <XCircle className="w-4 h-4 mr-1" /> رفض + إرجاع
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </div>

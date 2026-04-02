@@ -105,11 +105,49 @@ const Withdraw = () => {
   const minRequired = PACK_PRICE[packLevel] || 92;
   const maxWithdraw = Math.max(0, balance - minRequired);
 
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  const todayCount = [...pendingWithdrawals, ...historyWithdrawals].filter(w => {
+    return new Date(w.created_at) >= todayStart && w.status !== "cancelled" && w.status !== "rejected";
+  }).length;
+
+  const weekStart = new Date();
+  weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+  weekStart.setHours(0,0,0,0);
+  const weekCount = [...pendingWithdrawals, ...historyWithdrawals].filter(w => {
+    return new Date(w.created_at) >= weekStart && w.status !== "cancelled" && w.status !== "rejected";
+  }).length;
+
+  const dailyLimitReached = todayCount >= 1;
+  const weeklyLimitReached = weekCount >= 2;
+  const limitReached = dailyLimitReached || weeklyLimitReached;
+
   const handleWithdraw = async () => {
     if (!walletAddress.trim()) { toast.error("أدخل عنوان المحفظة"); return; }
     if (selectedAmount < 10) { toast.error("الحد الأدنى 10 USDT"); return; }
     if (maxWithdraw <= 0) { toast.error(`يجب أن يبقى $${minRequired} في حسابك`); return; }
     if (selectedAmount > maxWithdraw) { toast.error(`أقصى مبلغ: ${maxWithdraw.toFixed(2)} USDT`); return; }
+
+    // Check daily limit — max 1 per day
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    const todayWithdrawals = [...pendingWithdrawals, ...historyWithdrawals].filter(w => {
+      return new Date(w.created_at) >= todayStart && w.status !== "cancelled" && w.status !== "rejected";
+    });
+    if (todayWithdrawals.length >= 1) {
+      toast.error("🚫 لقد قمت بالسحب اليوم — يمكنك السحب مرة واحدة فقط في اليوم");
+      return;
+    }
+
+    // Check weekly limit — max 2 per week
+    const weekStart = new Date();
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    weekStart.setHours(0,0,0,0);
+    const weekWithdrawals = [...pendingWithdrawals, ...historyWithdrawals].filter(w => {
+      return new Date(w.created_at) >= weekStart && w.status !== "cancelled" && w.status !== "rejected";
+    });
+    if (weekWithdrawals.length >= 2) {
+      toast.error("🚫 بلغت الحد الأسبوعي — يمكنك السحب مرتين فقط في الأسبوع");
+      return;
+    }
 
     setLoading(true);
     try {
@@ -299,7 +337,21 @@ const Withdraw = () => {
             </div>
 
             {/* Warning */}
-            {selectedAmount > maxWithdraw && maxWithdraw > 0 && (
+            {/* Limit warning */}
+          {dailyLimitReached && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+              <p className="text-xs text-red-700 font-bold">🚫 لقد قمت بالسحب اليوم</p>
+              <p className="text-xs text-red-500 mt-1">يمكنك السحب مرة واحدة فقط في اليوم</p>
+            </div>
+          )}
+          {!dailyLimitReached && weeklyLimitReached && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+              <p className="text-xs text-red-700 font-bold">🚫 بلغت الحد الأسبوعي ({weekCount}/2)</p>
+              <p className="text-xs text-red-500 mt-1">يمكنك السحب مرتين فقط في الأسبوع</p>
+            </div>
+          )}
+
+          {selectedAmount > maxWithdraw && maxWithdraw > 0 && (
               <div className="bg-orange-50 border border-orange-100 rounded-xl p-3 text-center">
                 <p className="text-xs text-orange-600 font-bold">Max: {maxWithdraw.toFixed(2)} USDT · Must keep ${minRequired} for {packLevel}</p>
               </div>

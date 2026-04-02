@@ -1,39 +1,59 @@
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Input } from "@/components/ui/input";
-import { useLang } from "@/hooks/use-lang";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  Wallet, ArrowDownToLine, CreditCard, UserCog,
-  Globe, Landmark, Download, Search, User, Shield, LogOut, Copy, Check,
+  ArrowDownToLine, Check, Copy, CreditCard, Download,
+  Globe, Landmark, LogOut, Search, Shield, User, UserCog, Wallet,
 } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useLang } from "@/hooks/use-lang";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 const generateReferralCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
 
 const PROFIT_PER_SECOND: Record<string, number> = {
-  "Small shop":  11.5  / 86400,
-  "Medium shop": 39    / 86400,
-  "Large shop":  92    / 86400,
-  "Mega shop":   135   / 86400,
-  "VIP":         220   / 86400,
+  "Small shop": 11.5 / 86400,
+  "Medium shop": 39 / 86400,
+  "Large shop": 92 / 86400,
+  "Mega shop": 135 / 86400,
+  VIP: 220 / 86400,
 };
 
 const PACK_PRICE: Record<string, number> = {
-  "Small shop":  92,
+  "Small shop": 92,
   "Medium shop": 320,
-  "Large shop":  700,
-  "Mega shop":   1000,
-  "VIP":         1500,
+  "Large shop": 700,
+  "Mega shop": 1000,
+  VIP: 1500,
+};
+
+type StoreData = {
+  store_level: string;
+  balance: number;
+  total_topup: number;
+  total_profit: number;
+  team_earnings: number;
+};
+
+const INITIAL_STORE: StoreData = {
+  store_level: "Small shop",
+  balance: 0,
+  total_topup: 0,
+  total_profit: 0,
+  team_earnings: 0,
 };
 
 const Dashboard = () => {
-  const { lang } = useLang();
+  const { lang, dir } = useLang();
   const isAr = lang === "ar";
   const navigate = useNavigate();
+
+  const impersonateId = new URLSearchParams(window.location.search).get("impersonate");
+  const isImpersonating = !!impersonateId;
+
   const [searchDate, setSearchDate] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [userId, setUserId] = useState("");
@@ -41,35 +61,55 @@ const Dashboard = () => {
   const [referralCode, setReferralCode] = useState("");
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
-  const [storeData, setStoreData] = useState({
-    store_level: "Small shop",
-    balance: 0,
-    total_topup: 0,
-    total_profit: 0,
-    team_earnings: 0,
-  });
+  const [storeData, setStoreData] = useState<StoreData>(INITIAL_STORE);
   const [liveProfit, setLiveProfit] = useState(0);
   const [liveBalance, setLiveBalance] = useState(0);
 
-  const storeDataRef = useRef(storeData);
+  const [withdrawWindowOpen, setWithdrawWindowOpen] = useState(false);
+  const [withdrawCountdown, setWithdrawCountdown] = useState("");
+  const [withdrawNextOpen, setWithdrawNextOpen] = useState("");
+  const storeDataRef = useRef<StoreData>(INITIAL_STORE);
   const liveProfitRef = useRef(0);
   const liveBalanceRef = useRef(0);
   const userIdRef = useRef("");
-  // This ref persists across re-renders and refreshes (loaded from DB)
-  const renewalBlockedRef = useRef(false);
+  const lastTickRef = useRef(Date.now());
 
   useEffect(() => { storeDataRef.current = storeData; }, [storeData]);
 
   useEffect(() => {
     const loadUserData = async () => {
+      // Impersonate support
+      if (isImpersonating) {
+        setUserEmail(`👁️ عرض حساب: ${impersonateId!.slice(0, 8).toUpperCase()}`);
+        setUserId(impersonateId!.slice(0, 8).toUpperCase());
+        userIdRef.current = "";
+        const { data: store } = await supabase.from("user_stores").select("*").eq("user_id", impersonateId).maybeSingle();
+        if (store) {
+          setReferralCode(store.referral_code || "");
+          setStoreData({
+            store_level: store.store_level || "Small shop",
+            balance: Number(store.balance || 0),
+            total_topup: Number(store.total_topup || 0),
+            total_profit: Number(store.total_profit || 0),
+            team_earnings: Number(store.team_earnings || 0),
+          });
+          setLiveBalance(Number(store.balance || 0));
+          setLiveProfit(Number(store.total_profit || 0));
+          liveProfitRef.current = Number(store.total_profit || 0);
+          liveBalanceRef.current = Number(store.balance || 0);
+        }
+        return;
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { navigate("/login"); return; }
+
       userIdRef.current = user.id;
       setUserEmail(user.email || "");
       setUserId(user.id.slice(0, 8).toUpperCase());
 
       const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
-      if (roles && roles.some((r: any) => r.role === "admin")) setIsAdmin(true);
+      setIsAdmin(Boolean(roles?.some((r: any) => r.role === "admin")));
 
       let { data: store } = await supabase.from("user_stores").select("*").eq("user_id", user.id).maybeSingle();
 
@@ -84,113 +124,131 @@ const Dashboard = () => {
           total_profit: 0,
           team_earnings: 0,
           last_profit_update: new Date().toISOString(),
-          renewal_handled: false,
-        }).select().single();
+        } as any).select().single();
         store = newStore;
       }
 
       if (store && !store.referral_code) {
         const newCode = generateReferralCode();
-        await supabase.from("user_stores").update({ referral_code: newCode }).eq("user_id", user.id);
+        await supabase.from("user_stores").update({ referral_code: newCode } as any).eq("user_id", user.id);
         store.referral_code = newCode;
       }
 
-      if (store) {
-        setReferralCode(store.referral_code || "");
+      if (!store) return;
 
-        const level = store.store_level;
-        const packPrice = PACK_PRICE[level] || 92;
-        const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
-        const dbBalance = Number(store.balance);
-        const dbProfit = Number(store.total_profit);
-        const totalTopup = Number(store.total_topup);
+      setReferralCode(store.referral_code || "");
+      const dbBalance = Number(store.balance || 0);
+      const dbProfit = Number(store.total_profit || 0);
 
-        // Load renewal_handled from DB — this is the KEY fix
-        const isRenewalBlocked = store.renewal_handled === true;
-        renewalBlockedRef.current = isRenewalBlocked;
-
-        const lastUpdate = new Date(store.last_profit_update || new Date());
-        const secondsPassed = Math.max(0, (new Date().getTime() - lastUpdate.getTime()) / 1000);
-
-        let earnedSinceUpdate = 0;
-        if (totalTopup > 0 && dbBalance >= packPrice && !isRenewalBlocked) {
-          earnedSinceUpdate = perSecond * secondsPassed;
-        }
-
-        const startProfit = dbProfit + earnedSinceUpdate;
-        const startBalance = dbBalance + earnedSinceUpdate;
-
-        setLiveProfit(startProfit);
-        setLiveBalance(startBalance);
-        liveProfitRef.current = startProfit;
-        liveBalanceRef.current = startBalance;
-
-        setStoreData({
-          store_level: level,
-          balance: dbBalance,
-          total_topup: totalTopup,
-          total_profit: dbProfit,
-          team_earnings: Number(store.team_earnings || 0),
-        });
-
-        // Show renewal dialog ONLY if:
-        // 1. Has topup
-        // 2. Balance < pack price  
-        // 3. renewal_handled is FALSE in DB
-        // 4. Not already closed this session
-        const closedThisSession = sessionStorage.getItem(`renewal_closed_${user.id}`) === "true";
-        if (totalTopup > 0 && dbBalance < packPrice && !isRenewalBlocked && !closedThisSession) {
-                  }
-      }
+      // Just read from DB — cron job handles profit calculation
+      setStoreData({
+        store_level: store.store_level || "Small shop",
+        balance: dbBalance,
+        total_topup: Number(store.total_topup || 0),
+        total_profit: dbProfit,
+        team_earnings: Number(store.team_earnings || 0),
+      });
+      setLiveBalance(dbBalance);
+      setLiveProfit(dbProfit);
+      liveProfitRef.current = dbProfit;
+      liveBalanceRef.current = dbBalance;
+      lastTickRef.current = Date.now();
     };
     loadUserData();
   }, [navigate]);
 
-  // Tick every second
+  // Check withdrawal window
   useEffect(() => {
-    const interval = setInterval(() => {
-      const level = storeDataRef.current.store_level;
-      const topup = storeDataRef.current.total_topup;
-      const packPrice = PACK_PRICE[level] || 92;
-
-      // Stop if: no topup, balance low, renewal blocked, or dialog showing
-      if (topup <= 0 || liveBalanceRef.current < packPrice || renewalBlockedRef.current) return;
-
-      const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
-      const newProfit = liveProfitRef.current + perSecond;
-      const newBalance = liveBalanceRef.current + perSecond;
-      liveProfitRef.current = newProfit;
-      liveBalanceRef.current = newBalance;
-      setLiveProfit(newProfit);
-      setLiveBalance(newBalance);
-
-      // No renewal check in interval — only shown on page load
-    }, 1000);
-
-    // Save to DB every 10 seconds
-    const saveInterval = setInterval(async () => {
-      if (!userIdRef.current || storeDataRef.current.total_topup <= 0) return;
-      await supabase.from("user_stores").update({
-        total_profit: liveProfitRef.current,
-        balance: liveBalanceRef.current,
-        last_profit_update: new Date().toISOString(),
-      }).eq("user_id", userIdRef.current);
-    }, 10000);
-
-    return () => { clearInterval(interval); clearInterval(saveInterval); };
+    let timer: NodeJS.Timeout;
+    const checkWindow = async () => {
+      const { data } = await supabase.from("withdrawal_settings").select("*").eq("id", 1).single();
+      if (!data) return;
+      if (data.is_open && data.opened_at) {
+        const openedAt = new Date(data.opened_at);
+        const closeAt = new Date(openedAt.getTime() + (data.window_minutes || 150) * 60000);
+        const now = new Date();
+        if (now < closeAt) {
+          setWithdrawWindowOpen(true);
+          const updateCountdown = () => {
+            const remaining = closeAt.getTime() - Date.now();
+            if (remaining <= 0) { setWithdrawWindowOpen(false); setWithdrawCountdown(""); return; }
+            const h = Math.floor(remaining / 3600000);
+            const m = Math.floor((remaining % 3600000) / 60000);
+            const s = Math.floor((remaining % 60000) / 1000);
+            setWithdrawCountdown(`${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`);
+          };
+          updateCountdown();
+          timer = setInterval(updateCountdown, 1000);
+        } else {
+          setWithdrawWindowOpen(false);
+          const nextOpen = new Date(closeAt.getTime() + 48 * 3600000);
+          setWithdrawNextOpen(nextOpen.toLocaleString("ar"));
+        }
+      } else {
+        setWithdrawWindowOpen(false);
+        if (data.opened_at) {
+          const openedAt = new Date(data.opened_at);
+          const closeAt = new Date(openedAt.getTime() + (data.window_minutes || 150) * 60000);
+          const nextOpen = new Date(closeAt.getTime() + 48 * 3600000);
+          setWithdrawNextOpen(nextOpen.toLocaleString("ar"));
+        }
+      }
+    };
+    checkWindow();
+    return () => { if (timer) clearInterval(timer); };
   }, []);
 
+  // Live ticker — visual only, does NOT save to DB
+  // Cron job handles actual DB updates every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const level = storeDataRef.current.store_level || "Small shop";
+      const packPrice = PACK_PRICE[level] || 92;
+      const totalTopup = Number(storeDataRef.current.total_topup || 0);
+      if (totalTopup <= 0 || liveBalanceRef.current < packPrice) return;
+
+      const now = Date.now();
+      const elapsed = Math.max(0, (now - lastTickRef.current) / 1000);
+      lastTickRef.current = now;
+      const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
+      const delta = perSecond * elapsed;
+
+      liveProfitRef.current += delta;
+      liveBalanceRef.current += delta;
+      setLiveProfit(liveProfitRef.current);
+      setLiveBalance(liveBalanceRef.current);
+    }, 1000);
+
+    // Refresh from DB every 60 seconds to stay in sync with cron job
+    const syncInterval = setInterval(async () => {
+      if (!userIdRef.current || isImpersonating) return;
+      const { data: store } = await supabase.from("user_stores")
+        .select("balance, total_profit").eq("user_id", userIdRef.current).maybeSingle();
+      if (store) {
+        const dbBalance = Number(store.balance || 0);
+        const dbProfit = Number(store.total_profit || 0);
+        // Only update if DB value is higher (cron job added profit)
+        if (dbBalance > liveBalanceRef.current) {
+          liveBalanceRef.current = dbBalance;
+          setLiveBalance(dbBalance);
+        }
+        if (dbProfit > liveProfitRef.current) {
+          liveProfitRef.current = dbProfit;
+          setLiveProfit(dbProfit);
+        }
+      }
+    }, 60000);
+
+    return () => { clearInterval(interval); clearInterval(syncInterval); };
+  }, []);
 
   const handleLogout = async () => {
-    if (userIdRef.current && storeDataRef.current.total_topup > 0) {
-      await supabase.from("user_stores").update({
-        total_profit: liveProfitRef.current,
-        balance: liveBalanceRef.current,
-        last_profit_update: new Date().toISOString(),
-      }).eq("user_id", userIdRef.current);
-    }
     await supabase.auth.signOut();
     navigate("/login");
+  };
+
+  const handleWithdrawNav = async () => {
+    navigate("/withdraw");
   };
 
   const referralLink = `${window.location.origin}/login?ref=${referralCode}`;
@@ -198,14 +256,14 @@ const Dashboard = () => {
   const copyCode = () => {
     navigator.clipboard.writeText(referralCode);
     setCopiedCode(true);
-    toast.success("تم نسخ رمز الدعوة!");
+    toast.success(isAr ? "تم نسخ رمز الدعوة" : "Referral code copied");
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
   const copyLink = () => {
     navigator.clipboard.writeText(referralLink);
     setCopiedLink(true);
-    toast.success("تم نسخ رابط الدعوة!");
+    toast.success(isAr ? "تم نسخ رابط الدعوة" : "Referral link copied");
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
@@ -214,39 +272,37 @@ const Dashboard = () => {
     "Medium shop": "متجر متوسط",
     "Large shop": "متجر كبير",
     "Mega shop": "متجر ميغا",
-    "VIP": "VIP",
+    VIP: "VIP",
   };
 
-  const quickActions = [
-    { label: isAr ? "شحن" : "Recharge", icon: Wallet, color: "text-primary", bg: "bg-primary/10", to: "/topup" },
-    { label: isAr ? "سحب" : "Withdrawal", icon: ArrowDownToLine, color: "text-profit", bg: "bg-profit/10", to: "/withdraw" },
-    { label: isAr ? "محفظتي" : "My Wallet", icon: CreditCard, color: "text-orange-500", bg: "bg-orange-500/10", to: null },
-    { label: isAr ? "حسابي" : "Account", icon: UserCog, color: "text-purple-500", bg: "bg-purple-500/10", to: null },
-  ];
-
-  const bottomLinks = [
-    { label: isAr ? "الموقع الرسمي" : "Official Website", icon: Globe },
-    { label: isAr ? "قرض" : "Loan", icon: Landmark },
-    { label: isAr ? "تحميل" : "Download", icon: Download },
-  ];
-
-  const packActive = storeData.total_topup > 0 && liveBalance >= (PACK_PRICE[storeData.store_level] || 92);
+  const packPrice = PACK_PRICE[storeData.store_level] || PACK_PRICE["Small shop"];
+  const packActive = storeData.total_topup > 0 && liveBalance >= packPrice;
+  const dailyRate = (PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400;
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-24" dir={dir}>
 
-      <div className="bg-primary text-primary-foreground px-4 py-3 pt-16 text-center flex items-center justify-between">
+      {/* Impersonate banner */}
+      {isImpersonating && (
+        <div className="bg-orange-500 text-white text-center text-xs py-2 font-bold sticky top-0 z-50">
+          👁️ وضع المراقبة — حساب: {impersonateId?.slice(0, 8).toUpperCase()} — للقراءة فقط
+        </div>
+      )}
+
+      <div className="bg-primary text-primary-foreground px-4 py-3 pt-16 flex items-center justify-between shadow-sm">
         <p className="text-sm font-medium flex-1 text-center">
           {isAr ? "مستوى المتجر" : "Position"}:{" "}
           <span className="font-bold">{isAr ? (storeLevelAr[storeData.store_level] || storeData.store_level) : storeData.store_level}</span>
         </p>
-        <Button variant="ghost" size="icon" onClick={handleLogout} className="text-primary-foreground">
-          <LogOut className="w-5 h-5" />
-        </Button>
+        {!isImpersonating && (
+          <Button variant="ghost" size="icon" onClick={handleLogout} className="text-primary-foreground">
+            <LogOut className="w-5 h-5" />
+          </Button>
+        )}
       </div>
 
-      <div className="max-w-md mx-auto px-4 py-5 space-y-5">
-        {isAdmin && (
+      <div className="max-w-md mx-auto px-4 py-5 space-y-4">
+        {isAdmin && !isImpersonating && (
           <Link to="/admin">
             <Card className="shadow-md border-0 bg-destructive/10 cursor-pointer hover:bg-destructive/20 transition-colors">
               <CardContent className="p-4 flex items-center gap-3">
@@ -270,54 +326,53 @@ const Dashboard = () => {
                 <p className="text-sm font-bold text-foreground">{userId}</p>
                 <p className="text-xs text-muted-foreground mt-1">{isAr ? "البريد" : "Email"}</p>
                 <p className="text-sm font-bold text-foreground truncate">{userEmail}</p>
-                <p className="text-xs text-muted-foreground mt-1">{isAr ? "مستوى المتجر" : "Store Level"}</p>
-                <p className="text-sm font-semibold text-primary">
-                  {isAr ? (storeLevelAr[storeData.store_level] || storeData.store_level) : storeData.store_level}
-                </p>
               </div>
             </div>
-            <div className="bg-muted/50 rounded-xl p-3 text-center">
+            <div className="bg-muted/50 rounded-xl p-4 text-center">
               <p className="text-xs text-muted-foreground">{isAr ? "رصيد المتجر" : "My Store Credit"}</p>
-              <p className="text-3xl font-bold text-foreground tabular-nums">{liveBalance.toFixed(6)} USDT</p>
-              {packActive && <p className="text-xs text-green-500 mt-1">📈 {isAr ? "الربح يتزاد الآن" : "Earning now..."}</p>}
+              <p className="text-3xl font-bold text-foreground tabular-nums">{liveBalance.toFixed(2)} USDT</p>
+              {packActive && <p className="text-xs text-green-600 mt-1">📈 {isAr ? "الربح مباشر الآن" : "Live profit running"}</p>}
             </div>
           </CardContent>
         </Card>
 
-        {referralCode && (
+        {referralCode && !isImpersonating && (
           <Card className="shadow-md border-0 bg-primary text-primary-foreground">
             <CardContent className="p-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-sm opacity-80">{isAr ? "رمز الدعوة" : "Referral Code"}</span>
                 <span className="text-xl font-bold tracking-widest font-mono">{referralCode}</span>
                 <Button size="sm" variant="secondary" onClick={copyCode} className="h-8 px-3">
                   {copiedCode ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  <span className="mr-1 text-xs">{isAr ? "نسخ" : "Copy"}</span>
                 </Button>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs opacity-70 truncate flex-1">{referralLink}</span>
                 <Button size="sm" variant="secondary" onClick={copyLink} className="h-8 px-3 flex-shrink-0">
                   {copiedLink ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  <span className="mr-1 text-xs">{isAr ? "نسخ" : "Copy"}</span>
                 </Button>
               </div>
             </CardContent>
           </Card>
         )}
 
+        {/* Quick actions */}
         <div className="grid grid-cols-4 gap-3">
-          {quickActions.map((action) => {
-            const content = (
-              <div className="flex flex-col items-center gap-1.5 py-3 cursor-pointer">
-                <div className={`w-12 h-12 rounded-2xl ${action.bg} flex items-center justify-center`}>
-                  <action.icon className={`w-6 h-6 ${action.color}`} />
+          {[
+            { label: isAr ? "شحن" : "Recharge", icon: Wallet, color: "text-primary", bg: "bg-primary/10", action: () => navigate("/topup") },
+            { label: isAr ? "سحب" : "Withdrawal", icon: ArrowDownToLine, color: "text-profit", bg: "bg-profit/10", action: handleWithdrawNav },
+            { label: isAr ? "محفظتي" : "My Wallet", icon: CreditCard, color: "text-orange-500", bg: "bg-orange-500/10", action: null },
+            { label: isAr ? "حسابي" : "Account", icon: UserCog, color: "text-purple-500", bg: "bg-purple-500/10", action: null },
+          ].map((item) => (
+            <div key={item.label} onClick={item.action || undefined} className={item.action ? "cursor-pointer" : ""}>
+              <div className="flex flex-col items-center gap-1.5 py-3">
+                <div className={`w-12 h-12 rounded-2xl ${item.bg} flex items-center justify-center`}>
+                  <item.icon className={`w-6 h-6 ${item.color}`} />
                 </div>
-                <span className="text-xs font-medium text-foreground text-center leading-tight">{action.label}</span>
+                <span className="text-xs font-medium text-foreground text-center leading-tight">{item.label}</span>
               </div>
-            );
-            return action.to ? <Link key={action.label} to={action.to}>{content}</Link> : <div key={action.label}>{content}</div>;
-          })}
+            </div>
+          ))}
         </div>
 
         <Card className="shadow-md border-0">
@@ -329,8 +384,8 @@ const Dashboard = () => {
             </div>
             <div className="flex items-center justify-between py-2 border-b border-border/50">
               <span className="text-sm text-muted-foreground">{isAr ? "إجمالي الأرباح" : "Total Profit"}</span>
-              <span className="text-sm font-bold text-green-500 tabular-nums">
-                {storeData.total_topup > 0 ? liveProfit.toFixed(6) : "0.000000"}
+              <span className="text-sm font-bold text-green-600 tabular-nums">
+                {storeData.total_topup > 0 ? liveProfit.toFixed(2) : "0.00"}
               </span>
             </div>
             <div className="flex items-center justify-between py-2">
@@ -341,40 +396,73 @@ const Dashboard = () => {
             {storeData.total_topup > 0 && (
               packActive ? (
                 <div className="bg-green-50 rounded-xl p-3 text-center">
-                  <p className="text-xs text-green-600 font-medium">
-                    📈 {isAr ? "معدل الربح اليومي" : "Daily rate"}:{" "}
-                    <span className="font-bold">~${((PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400).toFixed(2)}/day</span>
+                  <p className="text-xs text-green-700 font-medium">
+                    📈 {isAr ? "الربح اليومي المتوقع" : "Expected daily profit"}:{" "}
+                    <span className="font-bold">~${dailyRate.toFixed(2)}/day</span>
                   </p>
-                  <p className="text-xs text-green-500 mt-1">✅ {isAr ? "الباقة نشطة" : "Pack is active"}</p>
+                  <p className="text-xs text-green-600 mt-1">{isAr ? "الحساب نشط" : "Account active"}</p>
                 </div>
               ) : (
                 <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
                   <p className="text-xs text-red-600 font-bold">
-                    ⛔ {isAr ? "الباقة موقوفة — الربح متوقف" : "Pack stopped — earning paused"}
+                    ⛔ {isAr ? "الباقة موقوفة - الربح متوقف" : "Pack stopped - profit paused"}
                   </p>
-                  <Link to="/topup" className="inline-block mt-2 bg-red-500 text-white text-xs font-bold px-4 py-1.5 rounded-full">
-                    {isAr ? "اشحن لإعادة التفعيل" : "Top up to reactivate"} →
-                  </Link>
+                  <Button size="sm" onClick={() => navigate(`/topup?amount=${packPrice}&plan=${encodeURIComponent(storeData.store_level)}`)} className="mt-2 rounded-full px-4">
+                    {isAr ? "إعادة التفعيل" : "Reactivate"}
+                  </Button>
                 </div>
               )
             )}
           </CardContent>
         </Card>
 
+        {/* Withdrawal window banner */}
+        {storeData.total_topup > 0 && (
+          withdrawWindowOpen ? (
+            <Card className="shadow-md border-0 bg-green-50 border-green-200">
+              <CardContent className="p-4 text-center space-y-1">
+                <p className="text-green-700 font-bold text-sm">✅ {isAr ? "نافذة السحب مفتوحة الآن" : "Withdrawal window is open"}</p>
+                <p className="text-xs text-green-600">{isAr ? "الوقت المتبقي:" : "Time remaining:"}</p>
+                <p className="text-3xl font-bold text-green-700 tabular-nums">{withdrawCountdown}</p>
+                <Button size="sm" className="mt-2 bg-green-600 hover:bg-green-700 text-white rounded-full px-6"
+                  onClick={() => navigate("/withdraw")}>
+                  {isAr ? "اسحب الآن" : "Withdraw Now"} →
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="shadow-md border-0 bg-red-50 border-red-200">
+              <CardContent className="p-4 text-center space-y-1">
+                <p className="text-red-700 font-bold text-sm">🔒 {isAr ? "نافذة السحب مغلقة" : "Withdrawal window closed"}</p>
+                {withdrawNextOpen && (
+                  <p className="text-xs text-red-500">
+                    {isAr ? "الفتح القادم المتوقع:" : "Next opening:"} <span className="font-bold">{withdrawNextOpen}</span>
+                  </p>
+                )}
+                <p className="text-xs text-red-400">{isAr ? "تُفتح كل 48 ساعة لمدة ساعتين ونصف" : "Opens every 48h for 2.5 hours"}</p>
+              </CardContent>
+            </Card>
+          )
+        )}
+
         <Card className="shadow-md border-0">
           <CardContent className="p-4">
             <div className="flex gap-2">
               <Input type="date" value={searchDate} onChange={(e) => setSearchDate(e.target.value)} className="flex-1" />
               <Button size="sm" className="bg-primary text-primary-foreground px-4">
-                <Search className="w-4 h-4 mr-1" />
-                {isAr ? "بحث" : "Search"}
+                <Search className="w-4 h-4" />
+                <span className="mx-1">{isAr ? "بحث" : "Search"}</span>
               </Button>
             </div>
           </CardContent>
         </Card>
 
         <div className="space-y-2">
-          {bottomLinks.map((link) => (
+          {[
+            { label: isAr ? "الموقع الرسمي" : "Official Website", icon: Globe },
+            { label: isAr ? "قرض" : "Loan", icon: Landmark },
+            { label: isAr ? "تحميل" : "Download", icon: Download },
+          ].map((link) => (
             <Card key={link.label} className="shadow-sm border-0 cursor-pointer hover:bg-muted/50 transition-colors">
               <CardContent className="p-4 flex items-center gap-3">
                 <link.icon className="w-5 h-5 text-primary" />

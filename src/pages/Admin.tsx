@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Shield, CheckCircle, XCircle, Lock, Plus, Minus, Edit, Users, Trash2, ZoomIn } from "lucide-react";
+import { Shield, CheckCircle, XCircle, Lock, Plus, Minus, Edit, Users, Trash2, ZoomIn, Eye, LogIn, ArrowUpCircle, ArrowDownCircle } from "lucide-react";
 import { toast } from "sonner";
 
 const ADMIN_USERNAME = "hassan";
@@ -16,47 +17,86 @@ const ADMIN_PASSWORD = "hassan";
 const STORE_LEVELS = ["Small shop", "Medium shop", "Large shop", "Mega shop", "VIP"];
 const REFERRAL_COMMISSION = 5;
 
+// ===================== TYPES =====================
+interface UserRow {
+  user_id: string;
+  email: string;
+  plain_password: string;
+  store_level: string;
+  balance: number;
+  total_topup: number;
+  total_profit: number;
+  team_earnings: number;
+  referral_code: string;
+  referred_by: string;
+  referral_count: number;
+  paid_referrals: number;
+  created_at: string;
+  last_profit_update: string;
+}
+
+// ===================== COMPONENT =====================
 const Admin = () => {
+  // --- Auth ---
   const [adminAuth, setAdminAuth] = useState(false);
   const [adminUser, setAdminUser] = useState("");
   const [adminPass, setAdminPass] = useState("");
-  const [users, setUsers] = useState([]);
-  const [topups, setTopups] = useState([]);
-  const [withdrawals, setWithdrawals] = useState([]);
+
+  // --- Data ---
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [topups, setTopups] = useState<any[]>([]);
+  const [withdrawals, setWithdrawals] = useState<any[]>([]);
+  const [upgrades, setUpgrades] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("topups");
 
+  // --- Topup approve ---
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
-  const [selectedTopup, setSelectedTopup] = useState(null);
+  const [selectedTopup, setSelectedTopup] = useState<any>(null);
   const [editedAmount, setEditedAmount] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const approvingRef = useRef(new Set<string>());
 
+  // --- Balance dialog ---
   const [balanceDialogOpen, setBalanceDialogOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedUser, setSelectedUser] = useState<UserRow | null>(null);
   const [balanceAmount, setBalanceAmount] = useState("");
-  const [balanceAction, setBalanceAction] = useState("add");
+  const [balanceReason, setBalanceReason] = useState("");
+  const [balanceAction, setBalanceAction] = useState<"add" | "subtract">("add");
 
+  // --- Level dialog ---
   const [levelDialogOpen, setLevelDialogOpen] = useState(false);
   const [selectedLevel, setSelectedLevel] = useState("");
 
+  // --- Manual topup ---
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [manualAmount, setManualAmount] = useState("");
   const [manualTxid, setManualTxid] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
-  const [referralDialogOpen, setReferralDialogOpen] = useState(false);
-  const [selectedUserReferrals, setSelectedUserReferrals] = useState([]);
-  const [selectedUserName, setSelectedUserName] = useState("");
+  // --- User detail modal ---
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailUser, setDetailUser] = useState<UserRow | null>(null);
+  const [detailTopups, setDetailTopups] = useState<any[]>([]);
+  const [detailWithdrawals, setDetailWithdrawals] = useState<any[]>([]);
+  const [detailTeam, setDetailTeam] = useState<UserRow[]>([]);
 
+  // --- Image zoom ---
   const [imgDialogOpen, setImgDialogOpen] = useState(false);
   const [imgUrl, setImgUrl] = useState("");
 
+  // --- Withdraw screenshot upload ---
+  const [uploadingWithdrawId, setUploadingWithdrawId] = useState("");
+
+  // --- Withdrawal window ---
+  const [withdrawWindow, setWithdrawWindow] = useState<any>(null);
+  const [windowCountdown, setWindowCountdown] = useState("");
+
+  // --- Delete ---
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [userToDelete, setUserToDelete] = useState(null);
-  const [upgrades, setUpgrades] = useState([]);
+  const [userToDelete, setUserToDelete] = useState<UserRow | null>(null);
 
-  const approvingRef = useRef(new Set());
-
+  // ===================== LOAD =====================
   useEffect(() => { if (adminAuth) loadAll(); }, [adminAuth]);
 
   const handleAdminLogin = () => {
@@ -69,37 +109,34 @@ const Admin = () => {
 
   const loadAll = async () => {
     setLoading(true);
-    await Promise.all([loadUsers(), loadTopups(), loadWithdrawals(), loadUpgrades()]);
+    await Promise.all([loadUsers(), loadTopups(), loadWithdrawals(), loadUpgrades(), loadWithdrawWindow()]);
     setLoading(false);
   };
 
   const loadUsers = async () => {
-    const { data: allUsers } = await supabase.from("users_with_email").select("*");
-    if (!allUsers) return;
-
-    // Get auth users emails via topups (we can get user_id → email mapping from auth)
-    const usersWithStats = allUsers.map((u) => {
+    const { data } = await supabase.from("users_with_email").select("*");
+    if (!data) return;
+    const mapped = data.map((u: any) => {
       const myCode = u.referral_code;
-      const referrals = allUsers.filter((r) => r.referred_by === myCode);
-      const paidReferrals = referrals.filter((r) => Number(r.total_topup) > 0);
+      const referrals = data.filter((r: any) => r.referred_by === myCode);
       return {
         user_id: u.user_id,
+        email: u.email || "",
+        plain_password: u.plain_password || "",
         store_level: u.store_level,
         balance: Number(u.balance),
         total_topup: Number(u.total_topup),
         total_profit: Number(u.total_profit),
+        team_earnings: Number(u.team_earnings || 0),
         referral_code: u.referral_code || "",
         referred_by: u.referred_by || "",
         referral_count: referrals.length,
-        paid_referrals: paidReferrals.length,
+        paid_referrals: referrals.filter((r: any) => Number(r.total_topup) > 0).length,
         created_at: u.created_at,
         last_profit_update: u.last_profit_update,
-        email: u.email || "",
-        plain_password: u.plain_password || "",
       };
     }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-    setUsers(usersWithStats);
+    setUsers(mapped);
   };
 
   const loadTopups = async () => {
@@ -117,7 +154,29 @@ const Admin = () => {
     if (data) setUpgrades(data);
   };
 
-  const openApproveDialog = (topup) => {
+  // ===================== USER DETAIL =====================
+  const openDetail = async (user: UserRow) => {
+    setDetailUser(user);
+    setDetailOpen(true);
+    const [{ data: t }, { data: w }] = await Promise.all([
+      supabase.from("topups").select("*").eq("user_id", user.user_id).order("created_at", { ascending: false }).limit(10),
+      supabase.from("withdrawals").select("*").eq("user_id", user.user_id).order("created_at", { ascending: false }).limit(10),
+    ]);
+    setDetailTopups(t || []);
+    setDetailWithdrawals(w || []);
+    setDetailTeam(users.filter(u => u.referred_by === user.referral_code));
+  };
+
+  // ===================== IMPERSONATE =====================
+  // Opens dashboard in a new tab with user_id in URL (read-only, no session change)
+  const handleImpersonate = (user: UserRow) => {
+    const url = `/dashboard?impersonate=${user.user_id}`;
+    window.open(url, "_blank");
+    toast.success(`👁️ فتح dashboard ديال ${user.email || user.user_id.slice(0,8).toUpperCase()}`);
+  };
+
+  // ===================== TOPUP APPROVE =====================
+  const openApproveDialog = (topup: any) => {
     setSelectedTopup(topup);
     setEditedAmount(String(topup.amount_usdt));
     setApproveDialogOpen(true);
@@ -134,97 +193,79 @@ const Admin = () => {
       const { error } = await supabase.from("topups").update({ status: "confirmed", amount_usdt: amount }).eq("id", selectedTopup.id).eq("status", "pending");
       if (error) throw error;
 
-      const { data: store } = await supabase.from("user_stores").select("balance, total_topup, referred_by, store_level").eq("user_id", selectedTopup.user_id).single();
+      const { data: store } = await supabase.from("user_stores").select("balance, total_topup, referred_by").eq("user_id", selectedTopup.user_id).single();
       if (store) {
         const bonus = Math.round(amount * 0.05 * 100) / 100;
-        const totalCredit = amount + bonus;
         const updateData: any = {
-          balance: Number(store.balance) + totalCredit,
+          balance: Number(store.balance) + amount + bonus,
           total_topup: Number(store.total_topup) + amount,
         };
-        // If upgrade topup, update store level
-        if (selectedTopup.upgrade_to) {
-          updateData.store_level = selectedTopup.upgrade_to;
-        }
+        if (selectedTopup.upgrade_to) updateData.store_level = selectedTopup.upgrade_to;
         await supabase.from("user_stores").update(updateData).eq("user_id", selectedTopup.user_id);
 
         if (store.referred_by) {
-          const { data: referrer } = await supabase.from("user_stores").select("balance, team_earnings").eq("referral_code", store.referred_by).single();
-          if (referrer) {
-            await supabase.from("user_stores").update({
-              balance: Number(referrer.balance) + REFERRAL_COMMISSION,
-              team_earnings: Number(referrer.team_earnings || 0) + REFERRAL_COMMISSION,
-            }).eq("referral_code", store.referred_by);
-            toast.success(`✅ ${amount} USDT + ${bonus} bonus${selectedTopup.upgrade_to ? ` + ترقية لـ ${selectedTopup.upgrade_to}` : ""} + $${REFERRAL_COMMISSION} للمحيل 🎁`);
-          } else {
-            toast.success(`✅ ${amount} USDT + ${bonus} bonus${selectedTopup.upgrade_to ? ` + ترقية لـ ${selectedTopup.upgrade_to}` : ""}`);
-          }
-        } else {
-          toast.success(`✅ ${amount} USDT + ${bonus} bonus${selectedTopup.upgrade_to ? ` + ترقية لـ ${selectedTopup.upgrade_to}` : ""}`);
+          const { data: ref } = await supabase.from("user_stores").select("balance, team_earnings").eq("referral_code", store.referred_by).single();
+          if (ref) await supabase.from("user_stores").update({ balance: Number(ref.balance) + REFERRAL_COMMISSION, team_earnings: Number(ref.team_earnings || 0) + REFERRAL_COMMISSION }).eq("referral_code", store.referred_by);
         }
-      } else {
-        await supabase.from("user_stores").insert({ user_id: selectedTopup.user_id, balance: amount, total_topup: amount });
-        toast.success(`✅ تمت الموافقة`);
+        toast.success(`✅ تمت الموافقة — ${amount} USDT + ${bonus} bonus${selectedTopup.upgrade_to ? ` + ترقية لـ ${selectedTopup.upgrade_to}` : ""}`);
       }
-
       setApproveDialogOpen(false);
       await loadAll();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
+    } catch (err: any) { toast.error(err.message || "حدث خطأ"); }
     finally { approvingRef.current.delete(selectedTopup.id); setSubmitting(false); }
   };
 
-  const handleReject = async (topupId) => {
-    try {
-      await supabase.from("topups").update({ status: "rejected" }).eq("id", topupId);
-      toast.success("تم رفض الطلب");
-      await loadTopups();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
+  const handleReject = async (id: string) => {
+    await supabase.from("topups").update({ status: "rejected" }).eq("id", id);
+    toast.success("تم رفض الطلب");
+    await loadTopups();
   };
 
-  const handleApproveWithdraw = async (w) => {
-    try {
-      await supabase.from("withdrawals").update({ status: "confirmed" }).eq("id", w.id);
-      toast.success(`✅ تم تأكيد سحب ${w.amount} USDT`);
-      await loadWithdrawals();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
+  // ===================== WITHDRAWALS =====================
+  const handleApproveWithdraw = async (w: any) => {
+    await supabase.from("withdrawals").update({ status: "confirmed" }).eq("id", w.id);
+    toast.success(`✅ تم تأكيد سحب ${w.amount} USDT`);
+    await loadWithdrawals();
   };
 
-  const handleRejectWithdraw = async (w) => {
-    try {
-      const { data: store } = await supabase.from("user_stores").select("balance").eq("user_id", w.user_id).single();
-      if (store) await supabase.from("user_stores").update({ balance: Number(store.balance) + Number(w.amount) }).eq("user_id", w.user_id);
-      await supabase.from("withdrawals").update({ status: "rejected" }).eq("id", w.id);
-      toast.success("تم رفض طلب السحب وإرجاع الرصيد");
-      await loadAll();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
+  const handleRejectWithdraw = async (w: any) => {
+    const { data: store } = await supabase.from("user_stores").select("balance").eq("user_id", w.user_id).single();
+    if (store) await supabase.from("user_stores").update({ balance: Number(store.balance) + Number(w.amount) }).eq("user_id", w.user_id);
+    await supabase.from("withdrawals").update({ status: "rejected" }).eq("id", w.id);
+    toast.success("تم رفض السحب وإرجاع الرصيد");
+    await loadAll();
   };
 
-  const openBalanceDialog = (user, action) => { setSelectedUser(user); setBalanceAction(action); setBalanceAmount(""); setBalanceDialogOpen(true); };
+  // ===================== BALANCE =====================
+  const openBalanceDialog = (user: UserRow, action: "add" | "subtract") => {
+    setSelectedUser(user);
+    setBalanceAction(action);
+    setBalanceAmount("");
+    setBalanceReason("");
+    setBalanceDialogOpen(true);
+  };
 
   const handleBalanceUpdate = async () => {
     if (!selectedUser || !balanceAmount || Number(balanceAmount) <= 0) { toast.error("أدخل مبلغ صحيح"); return; }
     const amount = Number(balanceAmount);
     const newBalance = balanceAction === "add" ? selectedUser.balance + amount : Math.max(0, selectedUser.balance - amount);
-    try {
-      await supabase.from("user_stores").update({ balance: newBalance }).eq("user_id", selectedUser.user_id);
-      toast.success(balanceAction === "add" ? `✅ تمت إضافة ${amount} $` : `✅ تم خصم ${amount} $`);
-      setBalanceDialogOpen(false);
-      await loadUsers();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
+    await supabase.from("user_stores").update({ balance: newBalance }).eq("user_id", selectedUser.user_id);
+    toast.success(balanceAction === "add" ? `✅ تمت إضافة ${amount} $ ${balanceReason ? `— ${balanceReason}` : ""}` : `✅ تم خصم ${amount} $ ${balanceReason ? `— ${balanceReason}` : ""}`);
+    setBalanceDialogOpen(false);
+    await loadUsers();
   };
 
-  const openLevelDialog = (user) => { setSelectedUser(user); setSelectedLevel(user.store_level); setLevelDialogOpen(true); };
-
+  // ===================== LEVEL =====================
+  const openLevelDialog = (user: UserRow) => { setSelectedUser(user); setSelectedLevel(user.store_level); setLevelDialogOpen(true); };
   const handleLevelUpdate = async () => {
-    if (!selectedUser || !selectedLevel) return;
-    try {
-      await supabase.from("user_stores").update({ store_level: selectedLevel }).eq("user_id", selectedUser.user_id);
-      toast.success("✅ تم تحديث مستوى المتجر");
-      setLevelDialogOpen(false);
-      await loadUsers();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
+    if (!selectedUser) return;
+    await supabase.from("user_stores").update({ store_level: selectedLevel }).eq("user_id", selectedUser.user_id);
+    toast.success("✅ تم تحديث المستوى");
+    setLevelDialogOpen(false);
+    await loadUsers();
   };
 
+  // ===================== MANUAL TOPUP =====================
   const handleManualTopup = async () => {
     if (!manualTxid.trim() || !manualAmount || Number(manualAmount) <= 0) { toast.error("أدخل المعرف والمبلغ"); return; }
     setSubmitting(true);
@@ -234,65 +275,81 @@ const Admin = () => {
       if (store) {
         await supabase.from("user_stores").update({ balance: Number(store.balance) + Number(manualAmount), total_topup: Number(store.total_topup) + Number(manualAmount) }).eq("user_id", selectedUserId);
         if (store.referred_by) {
-          const { data: referrer } = await supabase.from("user_stores").select("balance, team_earnings").eq("referral_code", store.referred_by).single();
-          if (referrer) await supabase.from("user_stores").update({ balance: Number(referrer.balance) + REFERRAL_COMMISSION, team_earnings: Number(referrer.team_earnings || 0) + REFERRAL_COMMISSION }).eq("referral_code", store.referred_by);
+          const { data: ref } = await supabase.from("user_stores").select("balance, team_earnings").eq("referral_code", store.referred_by).single();
+          if (ref) await supabase.from("user_stores").update({ balance: Number(ref.balance) + REFERRAL_COMMISSION, team_earnings: Number(ref.team_earnings || 0) + REFERRAL_COMMISSION }).eq("referral_code", store.referred_by);
         }
-      } else {
-        await supabase.from("user_stores").insert({ user_id: selectedUserId, balance: Number(manualAmount), total_topup: Number(manualAmount) });
       }
-      toast.success("تمت إضافة الرصيد بنجاح!");
+      toast.success("✅ تم الشحن اليدوي");
       setManualDialogOpen(false);
       await loadAll();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
+    } catch (err: any) { toast.error(err.message); }
     finally { setSubmitting(false); }
   };
 
-  const handleImpersonate = async (user) => {
-    if (!user.email || !user.plain_password) {
-      toast.error("لا يوجد email أو password لهذا المستخدم");
-      return;
-    }
+  // ===================== WITHDRAWAL WINDOW =====================
+  const loadWithdrawWindow = async () => {
+    const { data } = await supabase.from("withdrawal_settings").select("*").eq("id", 1).single();
+    if (data) setWithdrawWindow(data);
+  };
+
+  const handleOpenWindow = async () => {
+    await supabase.from("withdrawal_settings").update({
+      is_open: true,
+      opened_at: new Date().toISOString(),
+    }).eq("id", 1);
+    toast.success("✅ تم فتح نافذة السحب لمدة 2.5 ساعة!");
+    await loadWithdrawWindow();
+  };
+
+  const handleCloseWindow = async () => {
+    await supabase.from("withdrawal_settings").update({ is_open: false }).eq("id", 1);
+    toast.success("🔒 تم إغلاق نافذة السحب");
+    await loadWithdrawWindow();
+  };
+
+  // ===================== WITHDRAW SCREENSHOT UPLOAD =====================
+  const handleWithdrawScreenshot = async (withdrawId: string, file: File) => {
+    setUploadingWithdrawId(withdrawId);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: user.email,
-        password: user.plain_password,
-      });
-      if (error) throw error;
-      window.open("/dashboard", "_blank");
-      toast.success(`✅ دخلت كـ ${user.email}`);
-    } catch (err) {
-      toast.error(err.message || "حدث خطأ");
+      const fileExt = file.name.split(".").pop();
+      const fileName = `withdraw_admin_${withdrawId}_${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage
+        .from("topup-screenshots")
+        .upload(fileName, file);
+      if (uploadError) throw uploadError;
+      const { data: urlData } = supabase.storage.from("topup-screenshots").getPublicUrl(fileName);
+      await supabase.from("withdrawals").update({ screenshot_url: urlData.publicUrl }).eq("id", withdrawId);
+      toast.success("✅ تم رفع صورة الإثبات");
+      await loadWithdrawals();
+    } catch (err: any) {
+      toast.error(err.message || "حدث خطأ في الرفع");
+    } finally {
+      setUploadingWithdrawId("");
     }
   };
 
+  // ===================== DELETE =====================
   const handleDeleteUser = async () => {
     if (!userToDelete) return;
-    try {
-      await supabase.from("user_stores").delete().eq("user_id", userToDelete.user_id);
-      await supabase.from("topups").delete().eq("user_id", userToDelete.user_id);
-      await supabase.from("withdrawals").delete().eq("user_id", userToDelete.user_id);
-      toast.success("✅ تم حذف المستخدم");
-      setDeleteDialogOpen(false);
-      await loadAll();
-    } catch (err) { toast.error(err.message || "حدث خطأ"); }
+    await supabase.from("user_stores").delete().eq("user_id", userToDelete.user_id);
+    await supabase.from("topups").delete().eq("user_id", userToDelete.user_id);
+    await supabase.from("withdrawals").delete().eq("user_id", userToDelete.user_id);
+    toast.success("✅ تم حذف المستخدم");
+    setDeleteDialogOpen(false);
+    await loadAll();
   };
 
-  const openReferralDialog = (user) => {
-    setSelectedUserReferrals(users.filter(u => u.referred_by === user.referral_code));
-    setSelectedUserName(user.user_id.slice(0, 8).toUpperCase());
-    setReferralDialogOpen(true);
-  };
-
+  // ===================== LOGIN SCREEN =====================
   if (!adminAuth) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-sm">
-          <CardHeader className="text-center">
-            <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center mx-auto mb-3">
-              <Lock className="w-6 h-6 text-primary-foreground" />
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 px-4">
+        <Card className="w-full max-w-sm shadow-2xl border-0">
+          <CardHeader className="text-center pb-2">
+            <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-3">
+              <Shield className="w-7 h-7 text-primary-foreground" />
             </div>
-            <CardTitle className="text-xl">Admin Panel</CardTitle>
-            <p className="text-sm text-muted-foreground">أدخل بيانات الدخول</p>
+            <CardTitle className="text-2xl">Admin Panel</CardTitle>
+            <p className="text-sm text-muted-foreground">منصة الإدارة الآمنة</p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -303,7 +360,9 @@ const Admin = () => {
               <Label>Password</Label>
               <Input type="password" placeholder="••••••••" value={adminPass} onChange={e => setAdminPass(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdminLogin()} />
             </div>
-            <Button className="w-full h-11 font-bold" onClick={handleAdminLogin}>دخول</Button>
+            <Button className="w-full h-11 font-bold text-base" onClick={handleAdminLogin}>
+              <Lock className="w-4 h-4 mr-2" /> دخول
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -314,85 +373,119 @@ const Admin = () => {
   const otherTopups = topups.filter(t => t.status !== "pending");
   const pendingWithdrawals = withdrawals.filter(w => w.status === "pending");
   const otherWithdrawals = withdrawals.filter(w => w.status !== "pending");
+  const totalBalance = users.reduce((s, u) => s + u.balance, 0);
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center"><p className="text-muted-foreground">جاري التحميل...</p></div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="text-center space-y-2"><div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto"/><p className="text-muted-foreground">جاري التحميل...</p></div></div>;
 
   return (
-    <div className="min-h-screen bg-background pb-28 pt-6">
-      <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-slate-50 pb-16">
+      {/* ===== HEADER ===== */}
+      <div className="bg-white border-b sticky top-0 z-10 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center">
               <Shield className="w-5 h-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">لوحة الإدارة</h1>
-              <p className="text-sm text-muted-foreground">مرحباً {ADMIN_USERNAME} 👋</p>
+              <h1 className="text-lg font-bold leading-none">لوحة الإدارة</h1>
+              <p className="text-xs text-muted-foreground">مرحباً {ADMIN_USERNAME}</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setAdminAuth(false)}>خروج</Button>
+          <div className="flex items-center gap-3">
+            <div className="text-right hidden md:block">
+              <p className="text-xs text-muted-foreground">إجمالي الأرصدة</p>
+              <p className="font-bold text-green-600">{totalBalance.toFixed(2)} $</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setAdminAuth(false)}>خروج</Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        {/* ===== STATS ROW ===== */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { label: "المستخدمون", value: users.length, color: "text-blue-600", bg: "bg-blue-50" },
+            { label: "طلبات الشحن", value: pendingTopups.length, color: "text-orange-600", bg: "bg-orange-50" },
+            { label: "طلبات السحب", value: pendingWithdrawals.length, color: "text-red-600", bg: "bg-red-50" },
+            { label: "إجمالي الأرصدة", value: `${totalBalance.toFixed(0)}$`, color: "text-green-600", bg: "bg-green-50" },
+          ].map((s, i) => (
+            <div key={i} className={`${s.bg} rounded-2xl p-4 text-center`}>
+              <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+              <p className="text-xs text-gray-500 mt-1">{s.label}</p>
+            </div>
+          ))}
         </div>
 
-        {/* Tabs */}
+        {/* ===== WITHDRAWAL WINDOW CONTROL ===== */}
+        {withdrawWindow && (
+          <div className={`rounded-2xl p-4 flex items-center justify-between ${withdrawWindow.is_open ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
+            <div>
+              <p className={`font-bold text-sm ${withdrawWindow.is_open ? "text-green-700" : "text-red-700"}`}>
+                {withdrawWindow.is_open ? "✅ نافذة السحب مفتوحة" : "🔒 نافذة السحب مغلقة"}
+              </p>
+              {withdrawWindow.is_open && withdrawWindow.opened_at && (
+                <p className="text-xs text-green-600 mt-0.5">
+                  فُتحت: {new Date(withdrawWindow.opened_at).toLocaleString("ar")} · تُغلق بعد {withdrawWindow.window_minutes} دقيقة
+                </p>
+              )}
+            </div>
+            {withdrawWindow.is_open ? (
+              <Button variant="destructive" size="sm" onClick={handleCloseWindow}>🔒 إغلاق الآن</Button>
+            ) : (
+              <Button className="bg-green-600 hover:bg-green-700 text-white" size="sm" onClick={handleOpenWindow}>✅ فتح نافذة السحب</Button>
+            )}
+          </div>
+        )}
+
+        {/* ===== TABS ===== */}
         <div className="flex gap-2 flex-wrap">
-          <Button variant={activeTab === "topups" ? "default" : "outline"} onClick={() => setActiveTab("topups")}>
-            طلبات الشحن {pendingTopups.length > 0 && <Badge className="mr-2 bg-red-500">{pendingTopups.length}</Badge>}
-          </Button>
-          <Button variant={activeTab === "withdrawals" ? "default" : "outline"} onClick={() => setActiveTab("withdrawals")}>
-            طلبات السحب {pendingWithdrawals.length > 0 && <Badge className="mr-2 bg-orange-500">{pendingWithdrawals.length}</Badge>}
-          </Button>
-          <Button variant={activeTab === "users" ? "default" : "outline"} onClick={() => setActiveTab("users")}>
-            المستخدمون ({users.length})
-          </Button>
-          <Button variant={activeTab === "upgrades" ? "default" : "outline"} onClick={() => setActiveTab("upgrades")}>
-            الترقيات {upgrades.length > 0 && <Badge className="mr-2 bg-purple-500">{upgrades.length}</Badge>}
-          </Button>
+          {[
+            { key: "topups", label: "طلبات الشحن", count: pendingTopups.length, color: "bg-red-500" },
+            { key: "withdrawals", label: "طلبات السحب", count: pendingWithdrawals.length, color: "bg-orange-500" },
+            { key: "users", label: `المستخدمون (${users.length})`, count: 0, color: "" },
+            { key: "upgrades", label: "الترقيات", count: upgrades.length, color: "bg-purple-500" },
+          ].map(tab => (
+            <Button key={tab.key} variant={activeTab === tab.key ? "default" : "outline"} onClick={() => setActiveTab(tab.key)} className="relative">
+              {tab.label}
+              {tab.count > 0 && <Badge className={`mr-2 ${tab.color} text-white`}>{tab.count}</Badge>}
+            </Button>
+          ))}
         </div>
 
-        {/* TOPUPS TAB */}
+        {/* ===== TOPUPS TAB ===== */}
         {activeTab === "topups" && (
-          <div className="space-y-6">
+          <div className="space-y-4">
             {pendingTopups.length > 0 && (
-              <div className="space-y-4">
-                <h2 className="text-lg font-bold text-orange-500">⏳ طلبات الشحن في الانتظار ({pendingTopups.length})</h2>
-                {pendingTopups.map((t) => (
-                  <Card key={t.id} className="border-orange-500/40">
-                    <CardContent className="p-5">
-                      <div className="flex flex-col md:flex-row gap-5">
-                        {/* Screenshot - small, clickable */}
-                        <div className="md:w-1/3">
+              <div className="space-y-3">
+                <h2 className="text-lg font-bold text-orange-600">⏳ في الانتظار ({pendingTopups.length})</h2>
+                {pendingTopups.map(t => (
+                  <Card key={t.id} className="border-orange-200 shadow-sm">
+                    <CardContent className="p-4">
+                      <div className="flex flex-col md:flex-row gap-4">
+                        <div className="md:w-1/4 cursor-pointer group" onClick={() => { setImgUrl(t.screenshot_url); setImgDialogOpen(true); }}>
                           {t.screenshot_url ? (
-                            <div className="relative cursor-pointer group" onClick={() => { setImgUrl(t.screenshot_url); setImgDialogOpen(true); }}>
-                              <img src={t.screenshot_url} alt="إثبات" className="w-full rounded-xl border object-cover h-40 group-hover:opacity-80 transition-opacity" />
-                              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                <ZoomIn className="w-8 h-8 text-white drop-shadow-lg" />
+                            <div className="relative">
+                              <img src={t.screenshot_url} className="w-full h-36 object-cover rounded-xl border group-hover:opacity-80 transition-opacity" />
+                              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-xl">
+                                <ZoomIn className="w-8 h-8 text-white" />
                               </div>
                             </div>
                           ) : (
-                            <div className="w-full h-40 rounded-xl border flex items-center justify-center bg-muted text-muted-foreground text-sm">لا يوجد إثبات</div>
+                            <div className="w-full h-36 bg-muted rounded-xl flex items-center justify-center text-xs text-muted-foreground">لا يوجد إثبات</div>
                           )}
                         </div>
-                        {/* Info */}
-                        <div className="md:w-2/3 flex flex-col justify-between gap-3">
-                          <div className="grid grid-cols-2 gap-2 text-sm">
-                            <div><span className="text-muted-foreground">المبلغ:</span><span className="font-bold text-green-500 text-xl mr-2">{t.amount_usdt} USDT</span></div>
-                            <div><span className="text-muted-foreground">Account ID:</span><span className="font-mono font-bold mr-2">{t.user_id.slice(0, 8).toUpperCase()}</span></div>
-                            <div><span className="text-muted-foreground">التاريخ:</span><span className="mr-2">{new Date(t.created_at).toLocaleString("ar")}</span></div>
-                            {t.upgrade_to && <div><span className="text-muted-foreground">ترقية إلى:</span><span className="font-bold text-purple-500 mr-2">{t.upgrade_to}</span></div>}
+                        <div className="flex-1 space-y-3">
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                            <div><span className="text-muted-foreground">المبلغ: </span><span className="font-bold text-green-600 text-lg">{t.amount_usdt} USDT</span></div>
+                            <div><span className="text-muted-foreground">Account: </span><span className="font-mono font-bold">{t.user_id.slice(0,8).toUpperCase()}</span></div>
+                            <div><span className="text-muted-foreground">التاريخ: </span><span>{new Date(t.created_at).toLocaleDateString("en-GB")}</span></div>
+                            {t.upgrade_to && <div><span className="text-muted-foreground">ترقية إلى: </span><Badge className="bg-purple-500">⬆️ {t.upgrade_to}</Badge></div>}
                           </div>
-                          {t.upgrade_to && (
-                            <div className="bg-purple-50 border border-purple-200 rounded-xl px-3 py-2 text-xs text-purple-700 font-bold">
-                              ⬆️ طلب ترقية — سيتم تغيير الباقة لـ {t.upgrade_to} عند القبول
-                            </div>
-                          )}
-                          <div className="flex gap-3">
-                            <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white h-11 font-bold" onClick={() => openApproveDialog(t)}>
-                              <CheckCircle className="w-4 h-4 mr-2" /> قبول
-                            </Button>
-                            <Button className="flex-1 h-11 font-bold" variant="destructive" onClick={() => handleReject(t.id)}>
-                              <XCircle className="w-4 h-4 mr-2" /> رفض
-                            </Button>
+                          {t.upgrade_to && <div className="bg-purple-50 border border-purple-200 rounded-xl px-3 py-2 text-xs text-purple-700 font-bold">⬆️ طلب ترقية — سيتم تغيير الباقة عند القبول</div>}
+                          <div className="flex gap-2">
+                            <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white h-10 font-bold" onClick={() => openApproveDialog(t)}><CheckCircle className="w-4 h-4 mr-1" /> قبول</Button>
+                            <Button className="flex-1 h-10 font-bold" variant="destructive" onClick={() => handleReject(t.id)}><XCircle className="w-4 h-4 mr-1" /> رفض</Button>
                           </div>
                         </div>
                       </div>
@@ -401,21 +494,21 @@ const Admin = () => {
                 ))}
               </div>
             )}
-            {pendingTopups.length === 0 && <Card className="border-dashed"><CardContent className="p-8 text-center text-muted-foreground">✅ لا توجد طلبات شحن في الانتظار</CardContent></Card>}
+            {pendingTopups.length === 0 && <Card className="border-dashed"><CardContent className="p-10 text-center text-muted-foreground">✅ لا توجد طلبات شحن في الانتظار</CardContent></Card>}
             {otherTopups.length > 0 && (
               <Card>
-                <CardHeader><CardTitle>سجل الشحنات</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-base">سجل الشحنات ({otherTopups.length})</CardTitle></CardHeader>
                 <CardContent>
                   <Table>
-                    <TableHeader><TableRow><TableHead>Account ID</TableHead><TableHead>المبلغ</TableHead><TableHead>نوع</TableHead><TableHead>الحالة</TableHead><TableHead>التاريخ</TableHead></TableRow></TableHeader>
+                    <TableHeader><TableRow><TableHead>Account</TableHead><TableHead>المبلغ</TableHead><TableHead>نوع</TableHead><TableHead>الحالة</TableHead><TableHead>التاريخ</TableHead></TableRow></TableHeader>
                     <TableBody>
-                      {otherTopups.map((t) => (
+                      {otherTopups.slice(0, 50).map(t => (
                         <TableRow key={t.id}>
-                          <TableCell className="font-mono text-xs font-bold">{t.user_id.slice(0, 8).toUpperCase()}</TableCell>
+                          <TableCell className="font-mono text-xs font-bold">{t.user_id.slice(0,8).toUpperCase()}</TableCell>
                           <TableCell className="font-bold">{t.amount_usdt} USDT</TableCell>
-                          <TableCell>{t.upgrade_to ? <Badge className="bg-purple-500">⬆️ ترقية</Badge> : <Badge variant="outline">شحن</Badge>}</TableCell>
-                          <TableCell><Badge variant={t.status === "confirmed" ? "default" : "destructive"}>{t.status === "confirmed" ? "✅ مقبول" : "❌ مرفوض"}</Badge></TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{new Date(t.created_at).toLocaleString("ar")}</TableCell>
+                          <TableCell>{t.upgrade_to ? <Badge className="bg-purple-500 text-xs">⬆️ ترقية</Badge> : <Badge variant="outline" className="text-xs">شحن</Badge>}</TableCell>
+                          <TableCell><Badge variant={t.status === "confirmed" ? "default" : "destructive"} className="text-xs">{t.status === "confirmed" ? "✅" : "❌"}</Badge></TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{new Date(t.created_at).toLocaleDateString("en-GB")}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -426,48 +519,74 @@ const Admin = () => {
           </div>
         )}
 
-        {/* WITHDRAWALS TAB */}
+        {/* ===== WITHDRAWALS TAB ===== */}
         {activeTab === "withdrawals" && (
-          <div className="space-y-6">
+          <div className="space-y-4">
             {pendingWithdrawals.length > 0 && (
-              <div className="space-y-4">
-                <h2 className="text-lg font-bold text-orange-500">⏳ طلبات السحب ({pendingWithdrawals.length})</h2>
-                {pendingWithdrawals.map((w) => (
-                  <Card key={w.id} className="border-orange-500/40">
-                    <CardContent className="p-5">
-                      <div className="flex flex-col md:flex-row justify-between gap-4">
-                        <div className="space-y-2 text-sm">
-                          <div className="flex gap-4"><span className="text-muted-foreground">Account ID:</span><span className="font-mono font-bold">{w.user_id.slice(0, 8).toUpperCase()}</span></div>
-                          <div className="flex gap-4"><span className="text-muted-foreground">المبلغ:</span><span className="font-bold text-red-500 text-xl">{w.amount} USDT</span></div>
-                          <div className="flex gap-4"><span className="text-muted-foreground">الطريقة:</span><span className="font-mono text-xs bg-muted px-2 py-1 rounded">{w.method}</span></div>
-                          <div className="flex gap-4"><span className="text-muted-foreground">المحفظة:</span><span className="font-mono text-xs bg-blue-50 px-2 py-1 rounded text-blue-700 break-all">{w.wallet_address || "—"}</span></div>
-                          <div className="flex gap-4"><span className="text-muted-foreground">التاريخ:</span><span className="text-xs">{new Date(w.created_at).toLocaleString("ar")}</span></div>
+              <div className="space-y-3">
+                <h2 className="text-lg font-bold text-orange-600">⏳ طلبات السحب ({pendingWithdrawals.length})</h2>
+                {pendingWithdrawals.map(w => (
+                  <Card key={w.id} className="border-orange-200">
+                    <CardContent className="p-4 space-y-3">
+                      <div className="flex flex-col md:flex-row gap-4">
+                        {w.screenshot_url && (
+                          <div className="md:w-1/3 cursor-pointer group" onClick={() => { setImgUrl(w.screenshot_url); setImgDialogOpen(true); }}>
+                            <div className="relative">
+                              <img src={w.screenshot_url} className="w-full h-32 object-cover rounded-xl border group-hover:opacity-80 transition-opacity" />
+                              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-xl">
+                                <ZoomIn className="w-6 h-6 text-white" />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex-1 grid grid-cols-2 gap-2 text-sm">
+                          <div><span className="text-muted-foreground">Account: </span><span className="font-mono font-bold">{w.user_id.slice(0,8).toUpperCase()}</span></div>
+                          <div><span className="text-muted-foreground">المبلغ: </span><span className="font-bold text-red-500 text-lg">{w.amount} USDT</span></div>
+                          <div><span className="text-muted-foreground">الطريقة: </span><Badge variant="outline">{w.method}</Badge></div>
+                          <div><span className="text-muted-foreground">التاريخ: </span><span>{new Date(w.created_at).toLocaleDateString("en-GB")}</span></div>
+                          <div className="col-span-2"><span className="text-muted-foreground">المحفظة: </span><span className="font-mono text-xs bg-blue-50 px-2 py-1 rounded text-blue-700 break-all">{w.wallet_address || "—"}</span></div>
                         </div>
-                        <div className="flex gap-3 items-end">
-                          <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white h-11 font-bold" onClick={() => handleApproveWithdraw(w)}><CheckCircle className="w-4 h-4 mr-2" /> تأكيد</Button>
-                          <Button className="flex-1 h-11 font-bold" variant="destructive" onClick={() => handleRejectWithdraw(w)}><XCircle className="w-4 h-4 mr-2" /> رفض</Button>
-                        </div>
+                      </div>
+                      {/* Admin screenshot upload */}
+                      <div>
+                        <label className={`flex items-center justify-center gap-2 w-full py-2 rounded-xl border-2 border-dashed cursor-pointer text-xs font-bold transition-colors ${w.screenshot_url ? "border-green-300 text-green-600 bg-green-50" : "border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-500"}`}>
+                          {uploadingWithdrawId === w.id ? "جاري الرفع..." : w.screenshot_url ? "✅ تم رفع الإثبات — اضغط لتغييره" : "📸 رفع صورة إثبات الإرسال"}
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleWithdrawScreenshot(w.id, f); }} />
+                        </label>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white h-10 font-bold" onClick={() => handleApproveWithdraw(w)}><CheckCircle className="w-4 h-4 mr-1" /> تأكيد</Button>
+                        <Button className="flex-1 h-10 font-bold" variant="destructive" onClick={() => handleRejectWithdraw(w)}><XCircle className="w-4 h-4 mr-1" /> رفض + إرجاع</Button>
                       </div>
                     </CardContent>
                   </Card>
                 ))}
               </div>
             )}
-            {pendingWithdrawals.length === 0 && <Card className="border-dashed"><CardContent className="p-8 text-center text-muted-foreground">✅ لا توجد طلبات سحب</CardContent></Card>}
+            {pendingWithdrawals.length === 0 && <Card className="border-dashed"><CardContent className="p-10 text-center text-muted-foreground">✅ لا توجد طلبات سحب</CardContent></Card>}
             {otherWithdrawals.length > 0 && (
               <Card>
-                <CardHeader><CardTitle>سجل السحبات</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-base">سجل السحبات</CardTitle></CardHeader>
                 <CardContent>
                   <Table>
-                    <TableHeader><TableRow><TableHead>Account ID</TableHead><TableHead>المبلغ</TableHead><TableHead>المحفظة</TableHead><TableHead>الحالة</TableHead><TableHead>التاريخ</TableHead></TableRow></TableHeader>
+                    <TableHeader><TableRow><TableHead>Account</TableHead><TableHead>المبلغ</TableHead><TableHead>الطريقة</TableHead><TableHead>الوقت</TableHead><TableHead>إثبات</TableHead><TableHead>الحالة</TableHead></TableRow></TableHeader>
                     <TableBody>
-                      {otherWithdrawals.map((w) => (
+                      {otherWithdrawals.slice(0,50).map(w => (
                         <TableRow key={w.id}>
-                          <TableCell className="font-mono text-xs font-bold">{w.user_id.slice(0, 8).toUpperCase()}</TableCell>
+                          <TableCell>
+                            <p className="font-mono text-xs font-bold">{w.user_id.slice(0,8).toUpperCase()}</p>
+                            <p className="text-xs text-muted-foreground truncate max-w-[120px]">{users.find(u => u.user_id === w.user_id)?.email || "—"}</p>
+                          </TableCell>
                           <TableCell className="font-bold text-red-500">{w.amount} USDT</TableCell>
-                          <TableCell className="font-mono text-xs max-w-[120px] truncate">{w.wallet_address || "—"}</TableCell>
-                          <TableCell><Badge variant={w.status === "confirmed" ? "default" : "destructive"}>{w.status === "confirmed" ? "✅ مؤكد" : "❌ مرفوض"}</Badge></TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{new Date(w.created_at).toLocaleString("ar")}</TableCell>
+                          <TableCell className="text-xs">{w.method}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{new Date(w.created_at).toLocaleString("en-GB")}</TableCell>
+                          <TableCell>
+                            {w.screenshot_url ? (
+                              <img src={w.screenshot_url} className="w-10 h-10 object-cover rounded-lg cursor-pointer hover:opacity-80 border"
+                                onClick={() => { setImgUrl(w.screenshot_url); setImgDialogOpen(true); }} />
+                            ) : <span className="text-xs text-muted-foreground">—</span>}
+                          </TableCell>
+                          <TableCell><Badge variant={w.status === "confirmed" ? "default" : "destructive"} className="text-xs">{w.status === "confirmed" ? "✅" : "❌"}</Badge></TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -478,56 +597,66 @@ const Admin = () => {
           </div>
         )}
 
-        {/* USERS TAB */}
+        {/* ===== USERS TAB ===== */}
         {activeTab === "users" && (
-          <Card>
-            <CardHeader><CardTitle>المستخدمون ({users.length}) — مرتبون بتاريخ التسجيل</CardTitle></CardHeader>
-            <CardContent className="overflow-x-auto">
+          <Card className="shadow-sm">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>المستخدمون ({users.length})</CardTitle>
+                <div className="text-sm text-green-600 font-bold">💰 إجمالي: {totalBalance.toFixed(2)} $</div>
+              </div>
+            </CardHeader>
+            <CardContent className="overflow-x-auto p-0">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Account ID</TableHead>
+                  <TableRow className="bg-slate-50">
+                    <TableHead className="pl-4">Account</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>المستوى</TableHead>
                     <TableHead>الحالة</TableHead>
                     <TableHead>الرصيد</TableHead>
                     <TableHead>الإجمالي</TableHead>
-                    <TableHead>تاريخ التسجيل</TableHead>
-                    <TableHead>الرفيرالز</TableHead>
-                    <TableHead>إجراءات</TableHead>
+                    <TableHead>التسجيل</TableHead>
+                    <TableHead>فريق</TableHead>
+                    <TableHead className="pr-4">إجراءات</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {users.map((u) => (
-                    <TableRow key={u.user_id}>
-                      <TableCell className="font-mono text-sm font-bold">{u.user_id.slice(0, 8).toUpperCase()}</TableCell>
-                      <TableCell className="text-xs text-blue-600">{u.email || "—"}</TableCell>
+                  {users.map(u => (
+                    <TableRow key={u.user_id} className="hover:bg-slate-50/50">
+                      <TableCell className="font-mono text-xs font-bold pl-4">{u.user_id.slice(0,8).toUpperCase()}</TableCell>
+                      <TableCell className="text-xs text-blue-600 max-w-[140px] truncate">{u.email || "—"}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <span className="text-xs">{u.store_level}</span>
-                          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => openLevelDialog(u)}><Edit className="w-3 h-3" /></Button>
+                          <span className="text-xs whitespace-nowrap">{u.store_level}</span>
+                          <Button size="sm" variant="ghost" className="h-5 w-5 p-0 opacity-50 hover:opacity-100" onClick={() => openLevelDialog(u)}><Edit className="w-3 h-3" /></Button>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={u.total_topup > 0 ? "default" : "secondary"} className={u.total_topup > 0 ? "bg-green-500" : ""}>
-                          {u.total_topup > 0 ? "🟢 Active" : "⚪ Not Active"}
+                        <Badge className={`text-xs ${u.total_topup > 0 ? "bg-green-500" : "bg-gray-300 text-gray-600"}`}>
+                          {u.total_topup > 0 ? "🟢 Active" : "⚪ Inactive"}
                         </Badge>
                       </TableCell>
-                      <TableCell className="font-bold text-green-500">{u.balance.toFixed(2)} $</TableCell>
-                      <TableCell className="text-sm">{u.total_topup.toFixed(2)} $</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : "—"}</TableCell>
+                      <TableCell className="font-bold text-green-600">{u.balance.toFixed(2)}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{u.total_topup.toFixed(2)}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : "—"}</TableCell>
                       <TableCell>
-                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1" onClick={() => openReferralDialog(u)}>
-                          <Users className="w-3 h-3" />
-                          <span className="text-blue-500 font-bold">{u.referral_count}</span>
-                          <span className="text-muted-foreground">|</span>
-                          <span className="text-green-500 font-bold">{u.paid_referrals}</span>
-                        </Button>
+                        <Badge variant="outline" className="text-xs cursor-pointer" onClick={() => openDetail(u)}>
+                          <Users className="w-3 h-3 mr-1" />{u.referral_count}
+                        </Badge>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="pr-4">
                         <div className="flex gap-1">
-                          <Button size="sm" variant="outline" className="h-8 px-2 text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 border-blue-200" onClick={() => handleImpersonate(u)}>👁️</Button>
-                          <Button size="sm" variant="destructive" className="h-8 px-2" onClick={() => { setUserToDelete(u); setDeleteDialogOpen(true); }}><Trash2 className="w-3 h-3" /></Button>
+                          {/* View Details */}
+                          <Button size="sm" variant="outline" className="h-7 w-7 p-0" title="عرض التفاصيل" onClick={() => openDetail(u)}><Eye className="w-3 h-3" /></Button>
+                          {/* Add Balance */}
+                          <Button size="sm" className="h-7 w-7 p-0 bg-green-600 hover:bg-green-700 text-white" title="إضافة رصيد" onClick={() => openBalanceDialog(u, "add")}><ArrowUpCircle className="w-3 h-3" /></Button>
+                          {/* Subtract Balance */}
+                          <Button size="sm" variant="destructive" className="h-7 w-7 p-0" title="خصم رصيد" onClick={() => openBalanceDialog(u, "subtract")}><ArrowDownCircle className="w-3 h-3" /></Button>
+                          {/* Impersonate */}
+                          <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-blue-600 border-blue-200 hover:bg-blue-50" title="دخول كـ هذا المستخدم" onClick={() => handleImpersonate(u)}><LogIn className="w-3 h-3" /></Button>
+                          {/* Delete */}
+                          <Button size="sm" variant="destructive" className="h-7 w-7 p-0 opacity-60 hover:opacity-100" title="حذف" onClick={() => { setUserToDelete(u); setDeleteDialogOpen(true); }}><Trash2 className="w-3 h-3" /></Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -537,34 +666,22 @@ const Admin = () => {
             </CardContent>
           </Card>
         )}
-      </div>
 
-        {/* UPGRADES TAB */}
+        {/* ===== UPGRADES TAB ===== */}
         {activeTab === "upgrades" && (
           <Card>
             <CardHeader><CardTitle>سجل الترقيات ({upgrades.length})</CardTitle></CardHeader>
-            <CardContent className="overflow-x-auto">
-              {upgrades.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">لا توجد ترقيات بعد</p>
-              ) : (
+            <CardContent>
+              {upgrades.length === 0 ? <p className="text-center text-muted-foreground py-8">لا توجد ترقيات بعد</p> : (
                 <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Account ID</TableHead>
-                      <TableHead>من</TableHead>
-                      <TableHead>إلى</TableHead>
-                      <TableHead>المبلغ</TableHead>
-                      <TableHead>التاريخ</TableHead>
-                    </TableRow>
-                  </TableHeader>
+                  <TableHeader><TableRow><TableHead>Account</TableHead><TableHead>إلى</TableHead><TableHead>المبلغ</TableHead><TableHead>التاريخ</TableHead></TableRow></TableHeader>
                   <TableBody>
-                    {upgrades.map((u) => (
+                    {upgrades.map(u => (
                       <TableRow key={u.id}>
-                        <TableCell className="font-mono text-xs font-bold">{u.user_id.slice(0, 8).toUpperCase()}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">—</TableCell>
+                        <TableCell className="font-mono text-xs font-bold">{u.user_id.slice(0,8).toUpperCase()}</TableCell>
                         <TableCell><Badge className="bg-purple-500">⬆️ {u.upgrade_to}</Badge></TableCell>
                         <TableCell className="font-bold text-green-500">{u.amount_usdt} USDT</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{new Date(u.created_at).toLocaleString("ar")}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{new Date(u.created_at).toLocaleDateString("en-GB")}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -573,62 +690,188 @@ const Admin = () => {
             </CardContent>
           </Card>
         )}
+      </div>
 
-      {/* Image Zoom Dialog */}
-      <Dialog open={imgDialogOpen} onOpenChange={setImgDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>إثبات الدفع</DialogTitle></DialogHeader>
-          {imgUrl && <img src={imgUrl} alt="screenshot" className="w-full rounded-xl" />}
+      {/* ===== USER DETAIL MODAL ===== */}
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="w-5 h-5 text-primary" />
+              تفاصيل المستخدم — {detailUser?.user_id.slice(0,8).toUpperCase()}
+            </DialogTitle>
+          </DialogHeader>
+          {detailUser && (
+            <Tabs defaultValue="overview" dir="rtl">
+              <TabsList className="w-full grid grid-cols-4">
+                <TabsTrigger value="overview">نظرة عامة</TabsTrigger>
+                <TabsTrigger value="topups">الشحنات</TabsTrigger>
+                <TabsTrigger value="withdrawals">السحوبات</TabsTrigger>
+                <TabsTrigger value="team">الفريق</TabsTrigger>
+              </TabsList>
+
+              {/* Overview */}
+              <TabsContent value="overview" className="space-y-3 mt-4">
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { label: "Email", value: detailUser.email },
+                    { label: "Account ID", value: detailUser.user_id.slice(0,8).toUpperCase() },
+                    { label: "المستوى", value: detailUser.store_level },
+                    { label: "جاء من", value: detailUser.referred_by || "—" },
+                    { label: "تاريخ التسجيل", value: new Date(detailUser.created_at).toLocaleDateString("en-GB") },
+                    { label: "الحالة", value: detailUser.total_topup > 0 ? "🟢 Active" : "⚪ Inactive" },
+                  ].map((item, i) => (
+                    <div key={i} className="bg-slate-50 rounded-xl p-3">
+                      <p className="text-xs text-muted-foreground mb-1">{item.label}</p>
+                      <p className="text-sm font-bold break-all">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-green-50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-muted-foreground">الرصيد</p>
+                    <p className="text-xl font-bold text-green-600">{detailUser.balance.toFixed(2)} $</p>
+                  </div>
+                  <div className="bg-blue-50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-muted-foreground">إجمالي الشحن</p>
+                    <p className="text-xl font-bold text-blue-600">{detailUser.total_topup.toFixed(2)} $</p>
+                  </div>
+                  <div className="bg-purple-50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-muted-foreground">أرباح الفريق</p>
+                    <p className="text-xl font-bold text-purple-600">{detailUser.team_earnings.toFixed(2)} $</p>
+                  </div>
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={() => { setDetailOpen(false); openBalanceDialog(detailUser, "add"); }}><ArrowUpCircle className="w-4 h-4 mr-2" /> إضافة رصيد</Button>
+                  <Button className="flex-1" variant="destructive" onClick={() => { setDetailOpen(false); openBalanceDialog(detailUser, "subtract"); }}><ArrowDownCircle className="w-4 h-4 mr-2" /> خصم رصيد</Button>
+                  <Button className="flex-1" variant="outline" onClick={() => handleImpersonate(detailUser)}><LogIn className="w-4 h-4 mr-2" /> دخول كـ User</Button>
+                </div>
+              </TabsContent>
+
+              {/* Topups */}
+              <TabsContent value="topups" className="mt-4">
+                {detailTopups.length === 0 ? <p className="text-center text-muted-foreground py-6">لا توجد شحنات</p> : (
+                  <Table>
+                    <TableHeader><TableRow><TableHead>المبلغ</TableHead><TableHead>النوع</TableHead><TableHead>الحالة</TableHead><TableHead>التاريخ</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {detailTopups.map(t => (
+                        <TableRow key={t.id}>
+                          <TableCell className="font-bold">{t.amount_usdt} USDT</TableCell>
+                          <TableCell>{t.upgrade_to ? <Badge className="bg-purple-500 text-xs">ترقية</Badge> : <Badge variant="outline" className="text-xs">شحن</Badge>}</TableCell>
+                          <TableCell><Badge variant={t.status === "confirmed" ? "default" : "destructive"} className="text-xs">{t.status === "confirmed" ? "✅" : t.status === "pending" ? "⏳" : "❌"}</Badge></TableCell>
+                          <TableCell className="text-xs">{new Date(t.created_at).toLocaleDateString("en-GB")}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </TabsContent>
+
+              {/* Withdrawals */}
+              <TabsContent value="withdrawals" className="mt-4">
+                {detailWithdrawals.length === 0 ? <p className="text-center text-muted-foreground py-6">لا توجد سحوبات</p> : (
+                  <Table>
+                    <TableHeader><TableRow><TableHead>المبلغ</TableHead><TableHead>الطريقة</TableHead><TableHead>الحالة</TableHead><TableHead>التاريخ</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {detailWithdrawals.map(w => (
+                        <TableRow key={w.id}>
+                          <TableCell className="font-bold text-red-500">{w.amount} USDT</TableCell>
+                          <TableCell className="text-xs">{w.method}</TableCell>
+                          <TableCell><Badge variant={w.status === "confirmed" ? "default" : "destructive"} className="text-xs">{w.status === "confirmed" ? "✅" : w.status === "pending" ? "⏳" : "❌"}</Badge></TableCell>
+                          <TableCell className="text-xs">{new Date(w.created_at).toLocaleDateString("en-GB")}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </TabsContent>
+
+              {/* Team */}
+              <TabsContent value="team" className="mt-4">
+                {detailTeam.length === 0 ? <p className="text-center text-muted-foreground py-6">لا يوجد فريق بعد</p> : (
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Account</TableHead><TableHead>Email</TableHead><TableHead>المستوى</TableHead><TableHead>الإجمالي</TableHead><TableHead>الحالة</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {detailTeam.map(m => (
+                        <TableRow key={m.user_id}>
+                          <TableCell className="font-mono text-xs font-bold">{m.user_id.slice(0,8).toUpperCase()}</TableCell>
+                          <TableCell className="text-xs text-blue-600">{m.email}</TableCell>
+                          <TableCell className="text-xs">{m.store_level}</TableCell>
+                          <TableCell className="font-bold">{m.total_topup} $</TableCell>
+                          <TableCell><Badge className={m.total_topup > 0 ? "bg-green-500" : "bg-gray-300 text-gray-600"} >{m.total_topup > 0 ? "✅" : "⏳"}</Badge></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </TabsContent>
+            </Tabs>
+          )}
         </DialogContent>
       </Dialog>
 
-      {/* Delete User Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      {/* ===== BALANCE DIALOG ===== */}
+      <Dialog open={balanceDialogOpen} onOpenChange={setBalanceDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>⚠️ حذف المستخدم</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">هل أنت متأكد من حذف <span className="font-bold text-destructive">{userToDelete?.user_id.slice(0, 8).toUpperCase()}</span>؟ لن يتمكن من الدخول للمنصة.</p>
+          <DialogHeader>
+            <DialogTitle className={`flex items-center gap-2 ${balanceAction === "add" ? "text-green-600" : "text-red-600"}`}>
+              {balanceAction === "add" ? <ArrowUpCircle className="w-5 h-5" /> : <ArrowDownCircle className="w-5 h-5" />}
+              {balanceAction === "add" ? "إضافة رصيد" : "خصم رصيد"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="bg-slate-50 rounded-xl p-3 text-sm">
+              <span className="text-muted-foreground">المستخدم: </span><span className="font-bold">{selectedUser?.email || selectedUser?.user_id.slice(0,8).toUpperCase()}</span>
+              <br/>
+              <span className="text-muted-foreground">الرصيد الحالي: </span><span className="font-bold text-green-600">{selectedUser?.balance.toFixed(2)} $</span>
+            </div>
+            <div>
+              <Label>المبلغ ($) *</Label>
+              <Input type="number" placeholder="مثال: 50" value={balanceAmount} onChange={e => setBalanceAmount(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <Label>السبب (اختياري)</Label>
+              <Select onValueChange={setBalanceReason}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="اختر السبب..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="مكافأة">🎁 مكافأة</SelectItem>
+                  <SelectItem value="تصحيح خطأ">🔧 تصحيح خطأ</SelectItem>
+                  <SelectItem value="ترقية">⬆️ ترقية</SelectItem>
+                  <SelectItem value="استرداد">↩️ استرداد</SelectItem>
+                  <SelectItem value="عقوبة">⚠️ عقوبة</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>إلغاء</Button>
-            <Button variant="destructive" onClick={handleDeleteUser}>حذف نهائياً</Button>
+            <Button variant="outline" onClick={() => setBalanceDialogOpen(false)}>إلغاء</Button>
+            <Button
+              className={balanceAction === "add" ? "bg-green-600 hover:bg-green-700 text-white" : ""}
+              variant={balanceAction === "subtract" ? "destructive" : "default"}
+              onClick={handleBalanceUpdate}
+            >
+              {balanceAction === "add" ? "✅ إضافة" : "⚠️ خصم"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Referral Dialog */}
-      <Dialog open={referralDialogOpen} onOpenChange={setReferralDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>رفيرالز {selectedUserName}</DialogTitle></DialogHeader>
-          <div className="max-h-96 overflow-y-auto">
-            {selectedUserReferrals.length === 0 ? <p className="text-center text-muted-foreground py-4">لا يوجد رفيرالز بعد</p> : (
-              <Table>
-                <TableHeader><TableRow><TableHead>Account ID</TableHead><TableHead>المستوى</TableHead><TableHead>إجمالي الشحن</TableHead><TableHead>تاريخ التسجيل</TableHead><TableHead>الحالة</TableHead></TableRow></TableHeader>
-                <TableBody>
-                  {selectedUserReferrals.map((r) => (
-                    <TableRow key={r.user_id}>
-                      <TableCell className="font-mono text-xs font-bold">{r.user_id.slice(0, 8).toUpperCase()}</TableCell>
-                      <TableCell className="text-xs">{r.store_level}</TableCell>
-                      <TableCell className="font-bold text-sm">{r.total_topup} $</TableCell>
-                      <TableCell className="text-xs">{r.created_at ? new Date(r.created_at).toLocaleDateString("ar") : "—"}</TableCell>
-                      <TableCell><Badge variant={r.total_topup > 0 ? "default" : "secondary"}>{r.total_topup > 0 ? "✅ نشط" : "⏳ لم يخلص"}</Badge></TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </div>
-          <DialogFooter><Button variant="outline" onClick={() => setReferralDialogOpen(false)}>إغلاق</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Approve Dialog */}
+      {/* ===== APPROVE TOPUP DIALOG ===== */}
       <Dialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>تأكيد الموافقة</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>تأكيد الموافقة على الشحن</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="bg-blue-50 rounded-xl p-3 text-sm text-blue-700">🎁 سيتم إضافة <strong>5% bonus</strong> + <strong>${REFERRAL_COMMISSION}</strong> للمحيل{selectedTopup?.upgrade_to ? ` + ترقية لـ ${selectedTopup.upgrade_to}` : ""}</div>
-            <div><Label>المبلغ (USDT)</Label><Input type="number" value={editedAmount} onChange={e => setEditedAmount(e.target.value)} /></div>
+            <div className="bg-blue-50 rounded-xl p-3 text-sm text-blue-700 space-y-1">
+              <p>🎁 سيتم إضافة <strong>5% bonus</strong> تلقائياً</p>
+              <p>💰 سيتم إضافة <strong>${REFERRAL_COMMISSION}</strong> للمحيل</p>
+              {selectedTopup?.upgrade_to && <p>⬆️ سيتم ترقية الباقة إلى <strong>{selectedTopup.upgrade_to}</strong></p>}
+            </div>
+            <div>
+              <Label>المبلغ (USDT)</Label>
+              <Input type="number" value={editedAmount} onChange={e => setEditedAmount(e.target.value)} className="mt-1" />
+            </div>
             {selectedTopup?.screenshot_url && (
-              <img src={selectedTopup.screenshot_url} alt="إثبات" className="w-full rounded-xl border max-h-48 object-contain cursor-pointer" onClick={() => { setImgUrl(selectedTopup.screenshot_url); setImgDialogOpen(true); }} />
+              <img src={selectedTopup.screenshot_url} className="w-full rounded-xl border max-h-48 object-contain cursor-pointer hover:opacity-80" onClick={() => { setImgUrl(selectedTopup.screenshot_url); setImgDialogOpen(true); }} />
             )}
           </div>
           <DialogFooter>
@@ -638,31 +881,14 @@ const Admin = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Balance Dialog */}
-      <Dialog open={balanceDialogOpen} onOpenChange={setBalanceDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{balanceAction === "add" ? "➕ إضافة رصيد" : "➖ خصم رصيد"}</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-2">
-            <p className="text-sm text-muted-foreground">الرصيد الحالي: <span className="font-bold text-green-500">{selectedUser?.balance.toFixed(2)} $</span></p>
-            <div><Label>المبلغ ($)</Label><Input type="number" placeholder="مثال: 50" value={balanceAmount} onChange={e => setBalanceAmount(e.target.value)} /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBalanceDialogOpen(false)}>إلغاء</Button>
-            <Button className={balanceAction === "add" ? "bg-green-600 hover:bg-green-700 text-white" : ""} variant={balanceAction === "subtract" ? "destructive" : "default"} onClick={handleBalanceUpdate}>{balanceAction === "add" ? "إضافة" : "خصم"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Level Dialog */}
+      {/* ===== LEVEL DIALOG ===== */}
       <Dialog open={levelDialogOpen} onOpenChange={setLevelDialogOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>تغيير مستوى المتجر</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-2">
-            <Select value={selectedLevel} onValueChange={setSelectedLevel}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{STORE_LEVELS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
+          <Select value={selectedLevel} onValueChange={setSelectedLevel}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>{STORE_LEVELS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
+          </Select>
           <DialogFooter>
             <Button variant="outline" onClick={() => setLevelDialogOpen(false)}>إلغاء</Button>
             <Button onClick={handleLevelUpdate}>حفظ</Button>
@@ -670,18 +896,23 @@ const Admin = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Manual Topup Dialog */}
-      <Dialog open={manualDialogOpen} onOpenChange={setManualDialogOpen}>
+      {/* ===== DELETE DIALOG ===== */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>شحن يدوي</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-2">
-            <div><Label>معرف المعاملة (TXID)</Label><Input placeholder="أدخل TXID" value={manualTxid} onChange={e => setManualTxid(e.target.value)} /></div>
-            <div><Label>المبلغ (USDT)</Label><Input type="number" placeholder="مثال: 50" value={manualAmount} onChange={e => setManualAmount(e.target.value)} /></div>
-          </div>
+          <DialogHeader><DialogTitle className="text-destructive">⚠️ حذف المستخدم</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">هل أنت متأكد من حذف <strong className="text-destructive">{userToDelete?.email || userToDelete?.user_id.slice(0,8).toUpperCase()}</strong>؟ لن يتمكن من الدخول للمنصة وسيتم حذف كل بياناته.</p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setManualDialogOpen(false)}>إلغاء</Button>
-            <Button onClick={handleManualTopup} disabled={submitting}>{submitting ? "جاري..." : "تأكيد"}</Button>
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>إلغاء</Button>
+            <Button variant="destructive" onClick={handleDeleteUser}>حذف نهائياً 🗑️</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== IMAGE ZOOM ===== */}
+      <Dialog open={imgDialogOpen} onOpenChange={setImgDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>إثبات الدفع</DialogTitle></DialogHeader>
+          {imgUrl && <img src={imgUrl} className="w-full rounded-xl" />}
         </DialogContent>
       </Dialog>
     </div>

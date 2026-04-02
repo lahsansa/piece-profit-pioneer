@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Copy, AlertTriangle, Check, Upload, Send } from "lucide-react";
+import { Copy, AlertTriangle, Check, Upload, Send, History } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -8,11 +8,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import Footer from "@/components/Footer";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-const WALLET_ADDRESS = "TXrZ9BGi7H5kkGJN6u5rL4rDPxu7A1CxQN";
+const WALLET_ADDRESS = "TQkQj9Ru2VTTEHokygVKZdoWTKsJcMgASj";
 
 const TopupBalance = () => {
   const [searchParams] = useSearchParams();
@@ -22,16 +23,27 @@ const TopupBalance = () => {
   const [screenshot, setScreenshot] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const [upgradeTo, setUpgradeTo] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const [topupHistory, setTopupHistory] = useState<any[]>([]);
+  const [zoomedImg, setZoomedImg] = useState<string | null>(null);
 
   useEffect(() => {
     const urlAmount = searchParams.get("amount");
     const urlPlan = searchParams.get("plan");
-    const urlUpgradeTo = searchParams.get("to");
     if (urlAmount) setAmount(urlAmount);
     if (urlPlan) setPlanName(urlPlan);
-    if (urlUpgradeTo) setUpgradeTo(urlUpgradeTo);
+
+    // Load topup history
+    const loadHistory = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase.from("topups").select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (data) setTopupHistory(data);
+    };
+    loadHistory();
   }, [searchParams]);
 
   const handleCopy = () => {
@@ -66,8 +78,7 @@ const TopupBalance = () => {
       const fileExt = screenshot.name.split(".").pop();
       const fileName = `${user.id}_${Date.now()}.${fileExt}`;
       const { error: uploadError } = await supabase.storage
-        .from("topup-screenshots")
-        .upload(fileName, screenshot);
+        .from("topup-screenshots").upload(fileName, screenshot);
       if (uploadError) throw uploadError;
 
       const { data: urlData } = supabase.storage.from("topup-screenshots").getPublicUrl(fileName);
@@ -78,14 +89,18 @@ const TopupBalance = () => {
         txid: fileName,
         status: "pending",
         screenshot_url: urlData.publicUrl,
-        ...(upgradeTo ? { upgrade_to: upgradeTo } : {}),
       });
       if (insertError) throw insertError;
 
       toast.success("✅ تم إرسال طلب الشحن! سيتم مراجعته خلال 30 دقيقة");
-      setAmount(searchParams.get("amount") || "");
       setScreenshot(null);
       setPreview(null);
+
+      // Refresh history
+      const { data } = await supabase.from("topups").select("*")
+        .eq("user_id", user.id).order("created_at", { ascending: false }).limit(20);
+      if (data) setTopupHistory(data);
+      setShowHistory(true);
     } catch (err: any) {
       toast.error(err.message || "حدث خطأ");
     } finally {
@@ -93,19 +108,89 @@ const TopupBalance = () => {
     }
   };
 
+  const pendingCount = topupHistory.filter(t => t.status === "pending").length;
+
   return (
     <div className="min-h-screen bg-background pb-28" dir="rtl">
+
+      {/* Image zoom */}
+      {zoomedImg && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setZoomedImg(null)}>
+          <img src={zoomedImg} className="max-w-full max-h-full rounded-2xl" />
+          <p className="absolute bottom-6 text-white/60 text-xs">اضغط للإغلاق</p>
+        </div>
+      )}
+
       <div className="max-w-md mx-auto px-4 py-6 space-y-5">
 
         {/* Header */}
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="text-center">
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-foreground">شحن الرصيد</h1>
-          {planName && (
-            <div className="mt-2 inline-block bg-emerald-100 text-emerald-700 text-sm font-bold px-4 py-1.5 rounded-full">
+          <button onClick={() => setShowHistory(!showHistory)}
+            className="flex items-center gap-1.5 text-sm text-primary font-bold relative">
+            <History className="w-4 h-4" />
+            السجل
+            {pendingCount > 0 && (
+              <span className="absolute -top-1 -right-2 w-4 h-4 bg-orange-500 text-white text-xs rounded-full flex items-center justify-center">{pendingCount}</span>
+            )}
+          </button>
+        </motion.div>
+
+        {planName && (
+          <div className="text-center">
+            <div className="inline-block bg-emerald-100 text-emerald-700 text-sm font-bold px-4 py-1.5 rounded-full">
               🚀 تفعيل {planName}
             </div>
-          )}
-        </motion.div>
+          </div>
+        )}
+
+        {/* History */}
+        {showHistory && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+            <Card className="border-0 shadow-md">
+              <CardContent className="p-4 space-y-3">
+                <h3 className="font-bold text-foreground">سجل طلبات الشحن</h3>
+                {topupHistory.length === 0 ? (
+                  <p className="text-center text-muted-foreground text-sm py-4">لا توجد طلبات بعد</p>
+                ) : (
+                  topupHistory.map(t => (
+                    <div key={t.id} className={`rounded-xl p-3 border space-y-2 ${
+                      t.status === "pending" ? "bg-orange-50 border-orange-200" :
+                      t.status === "confirmed" ? "bg-green-50 border-green-200" :
+                      "bg-red-50 border-red-200"
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-gray-800">{t.amount_usdt} USDT</p>
+                          <p className="text-xs text-gray-500">{new Date(t.created_at).toLocaleString("ar")}</p>
+                        </div>
+                        {t.status === "pending" && <Badge className="bg-orange-500 text-white">⏳ قيد المراجعة</Badge>}
+                        {t.status === "confirmed" && <Badge className="bg-green-500 text-white">✅ مقبول</Badge>}
+                        {t.status === "rejected" && <Badge variant="destructive">❌ مرفوض</Badge>}
+                      </div>
+                      {/* Screenshot thumbnail */}
+                      {t.screenshot_url && (
+                        <img src={t.screenshot_url}
+                          className="w-14 h-14 object-cover rounded-xl cursor-pointer border hover:opacity-80"
+                          onClick={() => setZoomedImg(t.screenshot_url)} />
+                      )}
+                      {/* Status message */}
+                      {t.status === "confirmed" && (
+                        <p className="text-xs text-green-600 font-bold">✅ تمت الموافقة — تم إضافة الرصيد لحسابك</p>
+                      )}
+                      {t.status === "rejected" && (
+                        <p className="text-xs text-red-600 font-bold">❌ تم رفض الطلب — تواصل مع الدعم</p>
+                      )}
+                      {t.status === "pending" && (
+                        <p className="text-xs text-orange-600">⏳ طلبك قيد المراجعة — سيتم الرد خلال 30 دقيقة</p>
+                      )}
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
 
         {/* Warning */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
@@ -118,7 +203,7 @@ const TopupBalance = () => {
           </Alert>
         </motion.div>
 
-        {/* Amount required banner */}
+        {/* Amount banner */}
         {amount && (
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.15 }}>
             <div className="bg-emerald-600 text-white rounded-2xl p-4 text-center">
@@ -157,13 +242,8 @@ const TopupBalance = () => {
 
               <div className="space-y-2">
                 <Label>المبلغ المرسل (USDT)</Label>
-                <Input
-                  type="number"
-                  placeholder="مثال: 92"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  min="10"
-                />
+                <Input type="number" placeholder="مثال: 92" value={amount}
+                  onChange={(e) => setAmount(e.target.value)} min="10" />
               </div>
 
               <div className="space-y-2">
@@ -181,7 +261,8 @@ const TopupBalance = () => {
                 </label>
               </div>
 
-              <Button onClick={handleSubmit} disabled={loading} className="w-full h-12 text-base font-bold gap-2 bg-emerald-600 hover:bg-emerald-700 text-white">
+              <Button onClick={handleSubmit} disabled={loading}
+                className="w-full h-12 text-base font-bold gap-2 bg-emerald-600 hover:bg-emerald-700 text-white">
                 {loading ? "جاري الإرسال..." : <><Send className="w-5 h-5" />إرسال طلب الشحن</>}
               </Button>
             </CardContent>

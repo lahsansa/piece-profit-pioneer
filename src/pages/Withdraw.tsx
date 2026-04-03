@@ -22,6 +22,7 @@ const Withdraw = () => {
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState("");
   const [pendingWithdrawals, setPendingWithdrawals] = useState<any[]>([]);
+  const [totalProfit, setTotalProfit] = useState(0);
   const [historyWithdrawals, setHistoryWithdrawals] = useState<any[]>([]);
   const [cancelling, setCancelling] = useState("");
   const [activeTab, setActiveTab] = useState<"new" | "history">("new");
@@ -83,10 +84,14 @@ const Withdraw = () => {
       setUserId(user.id);
 
       const { data: store } = await supabase.from("user_stores")
-        .select("balance, store_level").eq("user_id", user.id).maybeSingle();
+        .select("balance, total_topup, total_profit, store_level").eq("user_id", user.id).maybeSingle();
       if (store) {
-        setBalance(Number(store.balance || 0));
+        const dbBalance = Number(store.balance || 0);
+        const calcBalance = Number(store.total_topup || 0) + Number(store.total_profit || 0);
+        setBalance(Math.max(dbBalance, calcBalance));
         setPackLevel(store.store_level || "Small shop");
+        // Max withdraw = profit only (protect capital)
+        setTotalProfit(Number(store.total_profit || 0));
       }
 
       const { data: pending } = await supabase.from("withdrawals").select("*")
@@ -103,7 +108,8 @@ const Withdraw = () => {
   }, [navigate]);
 
   const minRequired = PACK_PRICE[packLevel] || 92;
-  const maxWithdraw = Math.max(0, balance - minRequired);
+  // Max withdraw = profit only — capital is protected
+  const maxWithdraw = Math.max(0, totalProfit);
 
   const todayStart = new Date(); todayStart.setHours(0,0,0,0);
   const todayCount = [...pendingWithdrawals, ...historyWithdrawals].filter(w => {

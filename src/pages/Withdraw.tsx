@@ -337,19 +337,7 @@ const Withdraw = () => {
             </div>
 
             {/* Warning */}
-            {/* Limit warning */}
-          {dailyLimitReached && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
-              <p className="text-xs text-red-700 font-bold">🚫 لقد قمت بالسحب اليوم</p>
-              <p className="text-xs text-red-500 mt-1">يمكنك السحب مرة واحدة فقط في اليوم</p>
-            </div>
-          )}
-          {!dailyLimitReached && weeklyLimitReached && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
-              <p className="text-xs text-red-700 font-bold">🚫 بلغت الحد الأسبوعي ({weekCount}/2)</p>
-              <p className="text-xs text-red-500 mt-1">يمكنك السحب مرتين فقط في الأسبوع</p>
-            </div>
-          )}
+  
 
           {selectedAmount > maxWithdraw && maxWithdraw > 0 && (
               <div className="bg-orange-50 border border-orange-100 rounded-xl p-3 text-center">

@@ -22,6 +22,8 @@ import Admin from "@/pages/Admin";
 import Withdraw from "@/pages/Withdraw";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import Maintenance from "./pages/Maintenance";
+
 
 const queryClient = new QueryClient();
 
@@ -61,6 +63,8 @@ const App = () => (
             <Route path="/topup" element={<Protected><TopupBalance /></Protected>} />
             <Route path="/withdraw" element={<Protected><Withdraw /></Protected>} />
             <Route path="*" element={<NotFound />} />
+            <Route path="*" element={<Maintenance />} />
+
           </Routes>
           <BottomNav />
         </BrowserRouter>

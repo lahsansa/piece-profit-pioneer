@@ -20,7 +20,7 @@ import Orders from "@/pages/Orders";
 import TopupBalance from "@/pages/TopupBalance";
 import Admin from "@/pages/Admin";
 import Withdraw from "@/pages/Withdraw";
-import Chat from "@/pages/Chat";
+import chat from "@/pages/Chat";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 

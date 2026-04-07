@@ -22,8 +22,7 @@ import Admin from "@/pages/Admin";
 import Withdraw from "@/pages/Withdraw";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import Maintenance from "./pages/Maintenance";
-
+import Maintenance from "@/pages/Maintenance";
 
 const queryClient = new QueryClient();
 
@@ -52,7 +51,7 @@ const App = () => (
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/admin" element={<Admin />} />
-            <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
+            <Route path="/dashboard" element={<Protected><Maintenance /></Protected>} />
             <Route path="/store-levels" element={<Protected><StoreLevels /></Protected>} />
             <Route path="/business-plan" element={<Protected><BusinessPlan /></Protected>} />
             <Route path="/products" element={<Protected><Products /></Protected>} />
@@ -63,8 +62,6 @@ const App = () => (
             <Route path="/topup" element={<Protected><TopupBalance /></Protected>} />
             <Route path="/withdraw" element={<Protected><Withdraw /></Protected>} />
             <Route path="*" element={<NotFound />} />
-            <Route path="*" element={<Maintenance />} />
-
           </Routes>
           <BottomNav />
         </BrowserRouter>

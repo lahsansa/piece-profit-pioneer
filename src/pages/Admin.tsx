@@ -470,6 +470,17 @@ const Admin = () => {
   // ===================== WITHDRAWALS =====================
   const handleApproveWithdraw = async (w: any) => {
     await supabase.from("withdrawals").update({ status: "confirmed" }).eq("id", w.id);
+    // Deduct balance and total_profit from user
+    const { data: store } = await supabase.from("user_stores")
+      .select("balance, total_profit").eq("user_id", w.user_id).single();
+    if (store) {
+      await supabase.from("user_stores")
+        .update({ 
+          balance: Math.max(0, Number(store.balance) - Number(w.amount)),
+          total_profit: Math.max(0, Number(store.total_profit) - Number(w.amount)),
+        })
+        .eq("user_id", w.user_id);
+    }
     await supabase.from("notifications").insert({
       user_id: w.user_id,
       message: `✅ تم تأكيد سحبك ${w.amount} USDT — تم الإرسال إلى محفظتك`,

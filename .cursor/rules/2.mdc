@@ -1,0 +1,51 @@
+---
+description: 
+alwaysApply: true
+---
+
+أنت خبير React + Supabase + TypeScript لبناء منصات الاستثمار والـ MLM.
+
+**اسم المشروع:** Vertex Profit Pioneer (piece-profit-pioneer)
+**اللغة الرئيسية:** العربية (RTL) مع دعم إنجليزي بسيط.
+**الجمهور:** مستثمرين مغاربة وعرب يبحثون عن ربح يومي من خلال "متاجر إلكترونية افتراضية".
+
+### الميزات الأساسية للمشروع:
+
+- **نظام متاجر (Store Levels)**: Small → Mega → VIP (6 مستويات)
+- **ربح يومي تلقائي** (Live Profit) حسب مستوى المتجر
+- **نظام دعوة (Referral)** بـ 3 مستويات (Team A, B, C)
+- **شحن رصيد** بـ USDT (TRC20) + إثبات دفع
+- **سحب** USDT مع Pending + Cancel
+- **لوحة إدارة (Admin)** قوية جداً
+- **Dashboard** يظهر الربح في الوقت الفعلي
+
+### التقنيات المستخدمة:
+- Vite + React 18 + TypeScript + Tailwind + Shadcn/ui
+- Supabase (Auth, Database, Storage)
+- React Router v6
+- Framer Motion, Lucide React, Sonner (Toasts)
+- Recharts للإحصائيات
+
+### أهم الجداول في Supabase:
+- `user_stores` → (user_id, store_level, balance, total_topup, total_profit, team_earnings, referral_code, referred_by, last_profit_update, renewal_handled)
+- `topups`
+- `withdrawals`
+- `user_roles` (للأدمن)
+
+### قواعد مهمة يجب احترامها دائماً:
+- كل الواجهة بالعربية (dir="rtl")
+- التصميم نظيف، عصري، mobile-first
+- Live profit يجب أن يتحدث كل ثانية
+- حفظ البيانات في Supabase كل 8-10 ثواني
+- Error handling + Loading states في كل مكان
+- Toast notifications بـ Sonner
+- RTL يجب أن يكون مثالي
+
+### أولويات التطوير الحالية (رتبها بهذا الترتيب):
+1. إصلاح Dashboard (Live Profit + Renewal Dialog)
+2. تطوير Admin Panel (إضافة/خصم رصيد + سجل + فلترة)
+3. تحسين Topup + Withdraw
+4. تحسين Team Page
+5. Realtime updates بـ Supabase
+
+أنت تعرف المشروع كاملاً الآن. كن دقيقاً، نظيفاً، وتركز على تجربة المستخدم والأداء.

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  ArrowDownToLine, Check, Copy, CreditCard, Download,
-  Globe, Landmark, LogOut, Search, Shield, User, UserCog, Wallet,
+  ArrowDownToLine, Bell, Check, Copy, CreditCard, Download,
+  Globe, Landmark, LogOut, MessageCircle, Search, Shield, User, UserCog, Wallet, X,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -14,12 +14,34 @@ import { Input } from "@/components/ui/input";
 
 const generateReferralCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
 
+// Profit per second based on store_level (new rates)
 const PROFIT_PER_SECOND: Record<string, number> = {
-  "Small shop": 11.5 / 86400,
-  "Medium shop": 39 / 86400,
-  "Large shop": 92 / 86400,
-  "Mega shop": 135 / 86400,
-  VIP: 220 / 86400,
+  "Small shop": 2.8 / 86400,
+  "Medium shop": 11 / 86400,
+  "Large shop": 24 / 86400,
+  "Mega shop": 36 / 86400,
+  VIP: 55 / 86400,
+};
+
+// Get profit rate based on total_topup (old packs keep old rates, new packs get new rates)
+const getProfitPerSecond = (totalTopup: number, storeLevel: string): number => {
+  const t = Number(totalTopup);
+  // New packs (exact amounts)
+  if (t === 2200) return 78 / 86400;
+  if (t === 1650) return 55 / 86400;
+  if (t === 1100) return 36 / 86400;
+  if (t === 750)  return 24 / 86400;
+  if (t === 350)  return 11 / 86400;
+  if (t === 99)   return 2.8 / 86400;
+  if (t === 45)   return 1.2 / 86400;
+  // Old packs (keep original rates)
+  if (t >= 2000) return 300 / 86400;
+  if (t >= 1500) return 180 / 86400;
+  if (t >= 1000) return 110 / 86400;
+  if (t >= 700)  return 75 / 86400;
+  if (t >= 320)  return 32 / 86400;
+  if (t >= 92)   return 9.5 / 86400;
+  return PROFIT_PER_SECOND[storeLevel] || 1.2 / 86400;
 };
 
 const PACK_PRICE: Record<string, number> = {
@@ -64,6 +86,9 @@ const Dashboard = () => {
   const [storeData, setStoreData] = useState<StoreData>(INITIAL_STORE);
   const [liveProfit, setLiveProfit] = useState(0);
   const [liveBalance, setLiveBalance] = useState(0);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
 
   const [withdrawWindowOpen, setWithdrawWindowOpen] = useState(false);
   const [withdrawCountdown, setWithdrawCountdown] = useState("");
@@ -113,6 +138,18 @@ const Dashboard = () => {
 
       let { data: store } = await supabase.from("user_stores").select("*").eq("user_id", user.id).maybeSingle();
 
+      // Check if blocked
+      if (store?.is_blocked) {
+        const blockedUntil = store.blocked_until ? new Date(store.blocked_until) : null;
+        if (!blockedUntil || blockedUntil > new Date()) {
+          // Still blocked — show message but allow topup
+          setIsBlocked(true);
+        } else {
+          // Temp block expired — auto unblock
+          await supabase.from("user_stores").update({ is_blocked: false, blocked_since: null, blocked_until: null } as any).eq("user_id", user.id);
+        }
+      }
+
       if (!store) {
         const newCode = generateReferralCode();
         const { data: newStore } = await supabase.from("user_stores").insert({
@@ -153,6 +190,27 @@ const Dashboard = () => {
       liveProfitRef.current = dbProfit;
       liveBalanceRef.current = dbBalance;
       lastTickRef.current = Date.now();
+
+      // Load notifications
+      const { data: notifs } = await supabase
+        .from("notifications")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (notifs) setNotifications(notifs);
+
+      // Real-time notifications
+      supabase.channel("user-notifications")
+        .on("postgres_changes", {
+          event: "INSERT", schema: "public", table: "notifications",
+          filter: `user_id=eq.${user.id}`
+        }, (payload) => {
+          const n = payload.new as any;
+          setNotifications(prev => [n, ...prev]);
+          toast(n.message, { duration: 6000 });
+        })
+        .subscribe();
     };
     loadUserData();
   }, [navigate]);
@@ -205,12 +263,13 @@ const Dashboard = () => {
       const level = storeDataRef.current.store_level || "Small shop";
       const packPrice = PACK_PRICE[level] || 92;
       const totalTopup = Number(storeDataRef.current.total_topup || 0);
-      if (totalTopup <= 0 || liveBalanceRef.current < packPrice) return;
+      if (totalTopup <= 0) return;
 
+      if (isBlocked) { lastTickRef.current = Date.now(); return; }
       const now = Date.now();
       const elapsed = Math.max(0, (now - lastTickRef.current) / 1000);
       lastTickRef.current = now;
-      const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
+      const perSecond = getProfitPerSecond(storeData.total_topup, level);
       const delta = perSecond * elapsed;
 
       liveProfitRef.current += delta;
@@ -276,11 +335,16 @@ const Dashboard = () => {
   };
 
   const packPrice = PACK_PRICE[storeData.store_level] || PACK_PRICE["Small shop"];
-  const packActive = storeData.total_topup > 0 && liveBalance >= packPrice;
-  const dailyRate = (PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400;
+  const packActive = storeData.total_topup > 0;
+  const dailyRate = getProfitPerSecond(storeData.total_topup, storeData.store_level) * 86400;
 
   return (
     <div className="min-h-screen bg-background pb-24" dir={dir}>
+
+      {/* Maintenance banner */}
+      <div className="bg-orange-500 text-white text-center text-xs py-2 font-bold sticky top-0 z-50">
+        ⚙️ الموقع في صيانة مؤقتة — أرصدتك بأمان ✅ سنعود قريباً
+      </div>
 
       {/* Impersonate banner */}
       {isImpersonating && (
@@ -295,11 +359,54 @@ const Dashboard = () => {
           <span className="font-bold">{isAr ? (storeLevelAr[storeData.store_level] || storeData.store_level) : storeData.store_level}</span>
         </p>
         {!isImpersonating && (
-          <Button variant="ghost" size="icon" onClick={handleLogout} className="text-primary-foreground">
-            <LogOut className="w-5 h-5" />
-          </Button>
+          <div className="flex items-center gap-1">
+            {/* Bell */}
+            <Button variant="ghost" size="icon" className="text-primary-foreground relative" onClick={() => setNotifOpen(!notifOpen)}>
+              <Bell className="w-5 h-5" />
+              {notifications.filter(n => !n.read).length > 0 && (
+                <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full text-[10px] flex items-center justify-center font-bold">
+                  {notifications.filter(n => !n.read).length}
+                </span>
+              )}
+            </Button>
+            <Button variant="ghost" size="icon" onClick={handleLogout} className="text-primary-foreground">
+              <LogOut className="w-5 h-5" />
+            </Button>
+          </div>
         )}
       </div>
+
+      {/* Notifications Dropdown */}
+      {notifOpen && (
+        <div className="fixed top-16 left-0 right-0 z-50 max-w-md mx-auto px-4">
+          <Card className="shadow-xl border-0">
+            <CardContent className="p-0">
+              <div className="flex items-center justify-between px-4 py-3 border-b">
+                <p className="font-bold text-sm">🔔 الإشعارات</p>
+                <div className="flex items-center gap-2">
+                  {notifications.filter(n => !n.read).length > 0 && (
+                    <Button size="sm" variant="ghost" className="text-xs h-7" onClick={async () => {
+                      await supabase.from("notifications").update({ read: true }).eq("user_id", userIdRef.current).eq("read", false);
+                      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                    }}>قراءة الكل</Button>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setNotifOpen(false)}><X className="w-4 h-4" /></Button>
+                </div>
+              </div>
+              <div className="max-h-72 overflow-y-auto divide-y">
+                {notifications.length === 0 ? (
+                  <p className="text-center text-muted-foreground text-sm py-8">لا توجد إشعارات</p>
+                ) : notifications.map(n => (
+                  <div key={n.id} className={`px-4 py-3 ${!n.read ? "bg-blue-50" : ""}`}>
+                    <p className="text-sm">{n.message}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{new Date(n.created_at).toLocaleString("ar")}</p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <div className="max-w-md mx-auto px-4 py-5 space-y-4">
         {isAdmin && !isImpersonating && (
@@ -336,6 +443,69 @@ const Dashboard = () => {
           </CardContent>
         </Card>
 
+        {/* Notifications Card */}
+        {notifications.filter(n => !n.read).length > 0 && (
+          <Card className="shadow-md border-0 border-l-4 border-l-blue-500">
+            <CardContent className="p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-bold flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-blue-500" />
+                  {isAr ? "إشعارات جديدة" : "New Notifications"}
+                  <span className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                    {notifications.filter(n => !n.read).length}
+                  </span>
+                </p>
+                <Button size="sm" variant="ghost" className="text-xs h-7 text-blue-600" onClick={async () => {
+                  await supabase.from("notifications").update({ read: true }).eq("user_id", userIdRef.current).eq("read", false);
+                  setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                }}>
+                  {isAr ? "قراءة الكل" : "Mark all read"}
+                </Button>
+              </div>
+              <div className="space-y-3">
+                {notifications.filter(n => !n.read).map(n => (
+                  <div key={n.id} className={`rounded-xl p-3 text-sm ${
+                    n.type === "success" ? "bg-green-50 text-green-800" :
+                    n.type === "error" ? "bg-red-50 text-red-800" :
+                    "bg-blue-50 text-blue-800"
+                  }`}>
+                    <p>{n.message}</p>
+                    <p className="text-xs opacity-60 mt-1">{new Date(n.created_at).toLocaleString("ar")}</p>
+                    {/* رد على الرسالة */}
+                    {n.from_admin && !n.reply && (
+                      <div className="mt-2 flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="اكتب ردك..."
+                          className="flex-1 text-xs rounded-lg px-2 py-1 border border-current/20 bg-white/50 focus:outline-none"
+                          onKeyDown={async (e) => {
+                            if (e.key === "Enter" && e.currentTarget.value.trim()) {
+                              const replyText = e.currentTarget.value.trim();
+                              await supabase.from("notifications").update({
+                                reply: replyText,
+                                replied_at: new Date().toISOString(),
+                                read: true,
+                              }).eq("id", n.id);
+                              setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, reply: replyText, read: true } : x));
+                              toast.success("✅ تم إرسال ردك");
+                            }
+                          }}
+                        />
+                        <span className="text-xs opacity-50">↵ إرسال</span>
+                      </div>
+                    )}
+                    {n.reply && (
+                      <div className="mt-2 bg-white/50 rounded-lg px-2 py-1 text-xs">
+                        ردك: <span className="font-bold">{n.reply}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {referralCode && !isImpersonating && (
           <Card className="shadow-md border-0 bg-primary text-primary-foreground">
             <CardContent className="p-4 space-y-3">
@@ -361,7 +531,7 @@ const Dashboard = () => {
           {[
             { label: isAr ? "شحن" : "Recharge", icon: Wallet, color: "text-primary", bg: "bg-primary/10", action: () => navigate("/topup") },
             { label: isAr ? "سحب" : "Withdrawal", icon: ArrowDownToLine, color: "text-profit", bg: "bg-profit/10", action: handleWithdrawNav },
-            { label: isAr ? "محفظتي" : "My Wallet", icon: CreditCard, color: "text-orange-500", bg: "bg-orange-500/10", action: null },
+            { label: isAr ? "دردشة" : "Chat", icon: MessageCircle, color: "text-emerald-500", bg: "bg-emerald-500/10", action: () => navigate("/chat") },
             { label: isAr ? "حسابي" : "Account", icon: UserCog, color: "text-purple-500", bg: "bg-purple-500/10", action: null },
           ].map((item) => (
             <div key={item.label} onClick={item.action || undefined} className={item.action ? "cursor-pointer" : ""}>
@@ -415,6 +585,17 @@ const Dashboard = () => {
             )}
           </CardContent>
         </Card>
+
+        {/* Blocked banner */}
+        {isBlocked && (
+          <Card className="shadow-md border-0 bg-red-50 border-red-200">
+            <CardContent className="p-4 text-center space-y-2">
+              <p className="text-red-700 font-bold text-sm">🔒 حسابك محجوب مؤقتاً</p>
+              <p className="text-red-500 text-xs">لا يمكنك السحب أو الربح حتى يتم فك الحجب</p>
+              <p className="text-red-400 text-xs">للمزيد من المعلومات تواصل مع الدعم</p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Withdrawal window banner */}
         {storeData.total_topup > 0 && (

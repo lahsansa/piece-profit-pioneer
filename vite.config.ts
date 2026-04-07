@@ -2,5 +2,5 @@ import { componentTagger } from "lovable-tagger";
 
 plugins: [
   react(),
-  mode === 'development' && componentTagger(), // ← ghir development
-]
+  process.env.NODE_ENV === 'development' && componentTagger(),
+].filter(Boolean),

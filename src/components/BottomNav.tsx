@@ -1,5 +1,5 @@
 import { useLocation, Link } from "react-router-dom";
-import { Home, Newspaper, ShoppingBag, Users, ClipboardList, User, Wallet } from "lucide-react";
+import { Home, Newspaper, ShoppingBag, Users, ClipboardList, User, Wallet, MessageCircle } from "lucide-react";
 import { useLang } from "@/hooks/use-lang";
 
 const navItems = [
@@ -8,6 +8,7 @@ const navItems = [
   { to: "/store-levels", icon: ShoppingBag, label: "Buyout", labelAr: "شراء" },
   { to: "/topup", icon: Wallet, label: "Topup", labelAr: "شحن" },
   { to: "/team", icon: Users, label: "Team", labelAr: "فريق" },
+  { to: "/chat", icon: MessageCircle, label: "Chat", labelAr: "دردشة" },
   { to: "/invest", icon: ClipboardList, label: "Invest", labelAr: "استثمر" },
   { to: "/dashboard", icon: User, label: "User", labelAr: "مستخدم" },
 ];
@@ -21,7 +22,7 @@ const BottomNav = () => {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-border shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
-      <div className="max-w-md mx-auto grid grid-cols-7 py-2">
+      <div className="max-w-md mx-auto grid grid-cols-8 py-2">
         {navItems.map((item) => {
           const isActive = location.pathname === item.to;
           return (

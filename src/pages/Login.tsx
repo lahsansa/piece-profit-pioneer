@@ -78,7 +78,12 @@ const Login = () => {
         toast.success("تم إنشاء الحساب بنجاح! 🎉");
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes("Invalid login credentials") || error.message.includes("invalid")) {
+            throw new Error("❌ البريد الإلكتروني أو كلمة المرور غير صحيحة، أو تم حذف هذا الحساب");
+          }
+          throw error;
+        }
         toast.success("مرحباً بك! 👋");
       }
       navigate("/dashboard");

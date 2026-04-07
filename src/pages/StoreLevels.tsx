@@ -1,87 +1,89 @@
 import { motion } from "framer-motion";
-import { Store, Gem, TrendingUp, Star, Crown, Rocket, ArrowUp } from "lucide-react";
+import { Store, Gem, TrendingUp, Star, Crown, Rocket, Zap, ArrowUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { toast } from "sonner";
 
 const storePlans = [
   {
-    id: "small", nameAr: "متجر صغير", level: "LV1", icon: Store,
+    id: "pack45", nameAr: "باقة $45", level: "LV1", icon: Store,
+    color: "from-gray-400 to-gray-500", lightBg: "bg-gray-50",
+    iconColor: "text-gray-500", borderColor: "border-gray-200",
+    price: 45, products: 3, commission: 14,
+    daily: 1.2, monthly: 36, yearly: 400, roi: 42,
+  },
+  {
+    id: "pack99", nameAr: "باقة $99", level: "LV2", icon: Zap,
     color: "from-orange-400 to-orange-500", lightBg: "bg-orange-50",
     iconColor: "text-orange-500", borderColor: "border-orange-200",
-    price: 92, products: 5, commission: 10,
-    daily: { min: 9.5, max: 11.5 }, monthly: { min: 285, max: 345 }, yearly: { min: 3420, max: 4140 },
+    price: 99, products: 5, commission: 15,
+    daily: 2.8, monthly: 84, yearly: 920, roi: 40,
   },
   {
-    id: "medium", nameAr: "متجر متوسط", level: "LV2", icon: Gem,
+    id: "pack350", nameAr: "باقة $350", level: "LV3", icon: Gem,
     color: "from-blue-500 to-blue-600", lightBg: "bg-blue-50",
     iconColor: "text-blue-500", borderColor: "border-blue-200",
-    price: 320, products: 10, commission: 12,
-    daily: { min: 32, max: 39 }, monthly: { min: 960, max: 1170 }, yearly: { min: 11520, max: 14040 },
+    price: 350, products: 10, commission: 16,
+    daily: 11, monthly: 330, yearly: 3600, roi: 36,
   },
   {
-    id: "large", nameAr: "متجر كبير", level: "LV3", icon: TrendingUp,
+    id: "pack750", nameAr: "باقة $750", level: "LV4", icon: TrendingUp,
     color: "from-violet-500 to-violet-600", lightBg: "bg-violet-50",
     iconColor: "text-violet-500", borderColor: "border-violet-200",
-    price: 700, products: 15, commission: 15,
-    daily: { min: 75, max: 92 }, monthly: { min: 2250, max: 2760 }, yearly: { min: 27000, max: 33120 },
+    price: 750, products: 15, commission: 17,
+    daily: 24, monthly: 720, yearly: 7800, roi: 35,
   },
   {
-    id: "xl", nameAr: "متجر XL", level: "LV4", icon: Star,
+    id: "pack1100", nameAr: "باقة $1100", level: "LV5", icon: Star,
     color: "from-pink-500 to-rose-500", lightBg: "bg-pink-50",
     iconColor: "text-pink-500", borderColor: "border-pink-200",
-    price: 1000, products: 20, commission: 18,
-    daily: { min: 110, max: 135 }, monthly: { min: 3300, max: 4050 }, yearly: { min: 39600, max: 48600 },
+    price: 1100, products: 20, commission: 18,
+    daily: 36, monthly: 1080, yearly: 11800, roi: 33,
   },
   {
-    id: "premium", nameAr: "متجر بريميوم", level: "LV5", icon: Crown,
+    id: "pack1650", nameAr: "باقة $1650", level: "LV6", icon: Crown,
     color: "from-amber-500 to-yellow-500", lightBg: "bg-amber-50",
     iconColor: "text-amber-500", borderColor: "border-amber-200",
-    price: 1500, products: 30, commission: 20,
-    daily: { min: 180, max: 220 }, monthly: { min: 5400, max: 6600 }, yearly: { min: 64800, max: 79200 },
+    price: 1650, products: 30, commission: 19,
+    daily: 55, monthly: 1650, yearly: 18000, roi: 32,
   },
   {
-    id: "investor", nameAr: "متجر المستثمر", level: "LV6", icon: Rocket,
+    id: "pack2200", nameAr: "باقة $2200", level: "LV7", icon: Rocket,
     color: "from-emerald-500 to-teal-600", lightBg: "bg-emerald-50",
     iconColor: "text-emerald-600", borderColor: "border-emerald-200",
-    price: 2000, products: 50, commission: 25,
-    daily: { min: 300, max: 380 }, monthly: { min: 9000, max: 11400 }, yearly: { min: 108000, max: 136800 },
+    price: 2200, products: 50, commission: 20,
+    daily: 78, monthly: 2340, yearly: 26000, roi: 30,
   },
 ];
 
-const PACK_NAME_MAP: Record<string, string> = {
-  "small": "Small shop", "medium": "Medium shop", "large": "Large shop",
-  "xl": "Mega shop", "premium": "VIP", "investor": "VIP",
-};
-
 const StoreLevels = () => {
   const navigate = useNavigate();
-  const [currentPack, setCurrentPack] = useState("");
   const [currentPrice, setCurrentPrice] = useState(0);
   const [hasPaid, setHasPaid] = useState(false);
-  const [userId, setUserId] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      setUserId(user.id);
+      if (!user) { setLoading(false); return; }
       const { data: store } = await supabase
         .from("user_stores")
-        .select("store_level, total_topup")
+        .select("total_topup")
         .eq("user_id", user.id)
         .maybeSingle();
-
-      if (store) {
-        const paid = Number(store.total_topup) > 0;
-        setHasPaid(paid);
-        if (paid) {
-          setCurrentPack(store.store_level);
-          const plan = storePlans.find(p => PACK_NAME_MAP[p.id] === store.store_level);
-          if (plan) setCurrentPrice(plan.price);
-        }
+      if (store && Number(store.total_topup) > 0) {
+        setHasPaid(true);
+        const paid = Number(store.total_topup);
+        // Map old pack prices to new ones
+        const oldToNew: Record<number, number> = {
+          92: 99, 320: 350, 700: 750, 1000: 1100, 1500: 1650, 2000: 2200,
+        };
+        const mappedPaid = oldToNew[paid] || paid;
+        // Find closest pack price <= mappedPaid
+        const matchedPlan = [...storePlans].reverse().find(p => mappedPaid >= p.price);
+        if (matchedPlan) setCurrentPrice(matchedPlan.price);
       }
+      setLoading(false);
     };
     load();
   }, []);
@@ -91,10 +93,8 @@ const StoreLevels = () => {
   };
 
   const handleUpgrade = (plan: typeof storePlans[0]) => {
-    const packName = PACK_NAME_MAP[plan.id];
     const diff = plan.price - currentPrice;
-    // Go to topup with upgrade params — admin will see and update pack level on approve
-    navigate(`/topup?amount=${diff}&plan=${encodeURIComponent(plan.nameAr)}&upgrade=true&to=${encodeURIComponent(packName)}&from=${encodeURIComponent(currentPack)}`);
+    navigate(`/topup?amount=${diff}&plan=${encodeURIComponent(plan.nameAr)}&upgrade=true&to=${encodeURIComponent(plan.nameAr)}`);
   };
 
   return (
@@ -103,9 +103,9 @@ const StoreLevels = () => {
         <div className="max-w-md mx-auto text-center">
           <h1 className="text-xl font-bold tracking-wide">مستوى المتجر</h1>
           <p className="text-emerald-100 text-sm mt-1">اختر مستواك وابدأ رحلة الربح اليوم</p>
-          {hasPaid && currentPack && (
+          {hasPaid && currentPrice > 0 && (
             <div className="mt-2 inline-block bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full">
-              باقتك الحالية: {currentPack}
+              باقتك الحالية: ${currentPrice}
             </div>
           )}
         </div>
@@ -124,26 +124,31 @@ const StoreLevels = () => {
       <div className="px-4 py-3 space-y-4 max-w-md mx-auto">
         {storePlans.map((plan, i) => {
           const Icon = plan.icon;
-          const packName = PACK_NAME_MAP[plan.id];
-          const isCurrentPack = hasPaid && packName === currentPack;
+          const isCurrentPack = hasPaid && currentPrice === plan.price;
           const isUpgrade = hasPaid && plan.price > currentPrice;
           const isLower = hasPaid && plan.price < currentPrice;
-          const diff = plan.price - currentPrice;
 
           return (
-            <motion.div key={plan.id} initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
+            <motion.div
+              key={plan.id}
+              initial={{ opacity: 0, y: 24 }}
+              animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.1, duration: 0.4 }}
-              className={`bg-white rounded-2xl shadow-md overflow-hidden border ${plan.borderColor} ${isCurrentPack ? "ring-2 ring-emerald-500" : ""}`}>
-
+              className={`bg-white rounded-2xl shadow-md overflow-hidden border ${plan.borderColor} ${isCurrentPack ? "ring-2 ring-emerald-500" : ""}`}
+            >
               <div className={`bg-gradient-to-r ${plan.color} px-4 py-3 flex items-center justify-between`}>
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
                     <Icon className="w-5 h-5 text-white" />
                   </div>
                   <p className="font-bold text-white text-base">{plan.nameAr}</p>
-                  {isCurrentPack && <span className="bg-white text-emerald-600 text-xs font-bold px-2 py-0.5 rounded-full">✅ باقتك</span>}
+                  {isCurrentPack && (
+                    <span className="bg-white text-emerald-600 text-xs font-bold px-2 py-0.5 rounded-full">✅ باقتك</span>
+                  )}
                 </div>
-                <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-1 rounded-full">{plan.level}</span>
+                <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-1 rounded-full">
+                  {plan.level}
+                </span>
               </div>
 
               <div className="p-4 space-y-3">
@@ -153,7 +158,7 @@ const StoreLevels = () => {
                     <p className={`text-lg font-bold ${plan.iconColor}`}>{plan.products}</p>
                   </div>
                   <div className={`${plan.lightBg} rounded-xl p-2.5 text-center`}>
-                    <p className="text-[10px] text-gray-500 mb-0.5">العمولة</p>
+                    <p className="text-[10px] text-gray-500 mb-0.5">نسبة الربح</p>
                     <p className={`text-lg font-bold ${plan.iconColor}`}>{plan.commission}%</p>
                   </div>
                   <div className="bg-gray-50 rounded-xl p-2.5 text-center">
@@ -167,15 +172,23 @@ const StoreLevels = () => {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-500">💰 يومياً</span>
-                      <span className="text-sm font-bold text-emerald-600">{plan.daily.min} – {plan.daily.max} USDT</span>
+                      <span className="text-sm font-bold text-emerald-600">{plan.daily} USDT</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-500">📅 شهرياً</span>
-                      <span className="text-sm font-bold text-emerald-600">{plan.monthly.min} – {plan.monthly.max} USDT</span>
+                      <span className="text-sm font-bold text-emerald-600">{plan.monthly} USDT</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500">⏱ استرداد رأس المال</span>
+                      <span className="text-sm font-bold text-blue-600">{plan.roi} يوم</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500">📈 نسبة الربح</span>
+                      <span className="text-sm font-bold text-purple-600">{plan.commission}%</span>
                     </div>
                     <div className="flex items-center justify-between border-t border-emerald-100 pt-2">
-                      <span className="text-xs text-gray-500">🏆 سنوياً</span>
-                      <span className="text-base font-bold text-teal-700">{plan.yearly.min.toLocaleString()} – {plan.yearly.max.toLocaleString()} USDT</span>
+                      <span className="text-xs text-gray-500">🏆 صافي الربح سنوياً</span>
+                      <span className="text-base font-bold text-teal-700">{plan.yearly.toLocaleString()} USDT</span>
                     </div>
                   </div>
                 </div>
@@ -184,19 +197,27 @@ const StoreLevels = () => {
                   <div className="w-full py-3.5 rounded-xl bg-emerald-100 text-emerald-700 font-bold text-base text-center">
                     ✅ باقتك الحالية
                   </div>
+                ) : (plan.id === "pack45" && hasPaid) ? (
+                  <div className="w-full py-3.5 rounded-xl bg-gray-100 text-gray-400 font-bold text-base text-center cursor-not-allowed">
+                    🔒 باقة للمبتدئين فقط
+                  </div>
                 ) : isLower ? (
                   <div className="w-full py-3.5 rounded-xl bg-gray-100 text-gray-400 font-bold text-base text-center cursor-not-allowed">
                     🔒 لا يمكن التخفيض
                   </div>
                 ) : isUpgrade ? (
-                  <button onClick={() => handleUpgrade(plan)}
-                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => handleUpgrade(plan)}
+                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg flex items-center justify-center gap-2"
+                  >
                     <ArrowUp className="w-5 h-5" />
-                    ترقية — ادفع ${diff} فقط
+                    ترقية — ادفع ${plan.price - currentPrice} فقط
                   </button>
                 ) : (
-                  <button onClick={() => handleActivate(plan)}
-                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg shadow-emerald-200">
+                  <button
+                    onClick={() => handleActivate(plan)}
+                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg shadow-emerald-200"
+                  >
                     قم بالتفعيل الآن — ${plan.price} USDT 🚀
                   </button>
                 )}

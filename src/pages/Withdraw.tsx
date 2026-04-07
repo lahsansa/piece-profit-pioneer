@@ -25,6 +25,7 @@ const Withdraw = () => {
   const [totalProfit, setTotalProfit] = useState(0);
   const [historyWithdrawals, setHistoryWithdrawals] = useState<any[]>([]);
   const [cancelling, setCancelling] = useState("");
+  const [isBlocked, setIsBlocked] = useState(false);
   const [activeTab, setActiveTab] = useState<"new" | "history">("new");
   const [zoomedImg, setZoomedImg] = useState<string | null>(null);
   const [windowOpen, setWindowOpen] = useState(false);
@@ -84,14 +85,18 @@ const Withdraw = () => {
       setUserId(user.id);
 
       const { data: store } = await supabase.from("user_stores")
-        .select("balance, total_topup, total_profit, store_level").eq("user_id", user.id).maybeSingle();
+        .select("balance, total_topup, total_profit, store_level, is_blocked, blocked_until").eq("user_id", user.id).maybeSingle();
       if (store) {
         const dbBalance = Number(store.balance || 0);
         const calcBalance = Number(store.total_topup || 0) + Number(store.total_profit || 0);
         setBalance(Math.max(dbBalance, calcBalance));
         setPackLevel(store.store_level || "Small shop");
-        // Max withdraw = profit only (protect capital)
         setTotalProfit(Number(store.total_profit || 0));
+        // Check blocked
+        if (store.is_blocked) {
+          const blockedUntil = store.blocked_until ? new Date(store.blocked_until) : null;
+          if (!blockedUntil || blockedUntil > new Date()) setIsBlocked(true);
+        }
       }
 
       const { data: pending } = await supabase.from("withdrawals").select("*")
@@ -114,6 +119,7 @@ const Withdraw = () => {
 
 
   const handleWithdraw = async () => {
+    if (isBlocked) { toast.error("🔒 حسابك محجوب — لا يمكنك السحب"); return; }
     if (!walletAddress.trim()) { toast.error("أدخل عنوان المحفظة"); return; }
     if (selectedAmount < 10) { toast.error("الحد الأدنى 10 USDT"); return; }
     if (maxWithdraw <= 0) { toast.error(`يجب أن يبقى $${minRequired} في حسابك`); return; }
@@ -256,7 +262,15 @@ const Withdraw = () => {
         {activeTab === "new" && (
           <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
 
-            {/* Window status banner */}
+            {/* Blocked banner */}
+            {isBlocked && (
+              <div className="bg-red-50 border border-red-300 rounded-2xl p-4 text-center">
+                <p className="text-red-700 font-bold text-sm">🔒 حسابك محجوب</p>
+                <p className="text-red-500 text-xs mt-1">لا يمكنك السحب — تواصل مع الدعم</p>
+              </div>
+            )}
+
+          {/* Window status banner */}
             {windowOpen ? (
               <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
                 <p className="text-green-700 font-bold text-sm">✅ نافذة السحب مفتوحة الآن</p>
@@ -325,7 +339,7 @@ const Withdraw = () => {
 
             {/* Submit */}
             <button onClick={handleWithdraw}
-              disabled={loading || selectedAmount > maxWithdraw || maxWithdraw <= 0 || !walletAddress.trim() || !windowOpen}
+              disabled={loading || selectedAmount > maxWithdraw || maxWithdraw <= 0 || !walletAddress.trim() || !windowOpen || isBlocked}
               className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 rounded-2xl text-base disabled:opacity-40 transition-all shadow-lg shadow-blue-100">
               {loading ? "Processing..." : !windowOpen ? "🔒 نافذة السحب مغلقة" : `Withdraw ${selectedAmount} USDT`}
             </button>

@@ -38,11 +38,87 @@ interface UserRow {
   last_profit_update: string;
 }
 
+// ===================== USER REPLIES COMPONENT =====================
+const UserReplies = ({ userId, onSendReply }: { userId: string; onSendReply: (msg: string) => Promise<void> }) => {
+  const [msgs, setMsgs] = useState<any[]>([]);
+  const [newMsg, setNewMsg] = useState("");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase.from("notifications")
+        .select("*").eq("user_id", userId)
+        .order("created_at", { ascending: true });
+      if (data) setMsgs(data);
+    };
+    load();
+  }, [userId]);
+
+  const send = async () => {
+    if (!newMsg.trim()) return;
+    setSending(true);
+    await onSendReply(newMsg.trim());
+    const { data } = await supabase.from("notifications").select("*").eq("user_id", userId).order("created_at", { ascending: true });
+    if (data) setMsgs(data);
+    setNewMsg("");
+    setSending(false);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2 max-h-64 overflow-y-auto">
+        {msgs.length === 0 ? (
+          <p className="text-center text-muted-foreground text-sm py-4">لا توجد رسائل بعد</p>
+        ) : msgs.map(m => (
+          <div key={m.id} className="space-y-1">
+            {/* رسالة Admin */}
+            <div className="bg-blue-50 rounded-xl px-3 py-2 text-sm text-blue-800 max-w-[85%]">
+              <p className="text-xs text-blue-400 mb-0.5 font-bold">Admin 👤</p>
+              <p>{m.message}</p>
+              <p className="text-xs opacity-50 mt-0.5">{new Date(m.created_at).toLocaleString("ar")}</p>
+            </div>
+            {/* رد User */}
+            {m.reply && (
+              <div className="bg-green-50 rounded-xl px-3 py-2 text-sm text-green-800 max-w-[85%] mr-auto ml-4">
+                <p className="text-xs text-green-400 mb-0.5 font-bold">User 💬</p>
+                <p>{m.reply}</p>
+                <p className="text-xs opacity-50 mt-0.5">{new Date(m.replied_at).toLocaleString("ar")}</p>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {/* إرسال رسالة جديدة */}
+      <div className="flex gap-2 pt-2 border-t">
+        <input
+          type="text"
+          placeholder="اكتب رسالة لهذا المستخدم..."
+          className="flex-1 text-sm rounded-xl px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-primary"
+          value={newMsg}
+          onChange={e => setNewMsg(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && send()}
+        />
+        <button
+          onClick={send}
+          disabled={sending || !newMsg.trim()}
+          className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-xl disabled:opacity-50"
+        >
+          إرسال
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ===================== COMPONENT =====================
 const Admin = () => {
   // --- Auth ---
-  const [adminAuth, setAdminAuth] = useState(false);
-  const [adminUser, setAdminUser] = useState("");
+  const [adminAuth, setAdminAuth] = useState(() => {
+    return localStorage.getItem("adminAuth") === "true";
+  });
+  const [adminUser, setAdminUser] = useState(() => {
+    return localStorage.getItem("adminUser") || "";
+  });
   const [adminPass, setAdminPass] = useState("");
   const [adminLoginLoading, setAdminLoginLoading] = useState(false);
 
@@ -101,9 +177,33 @@ const Admin = () => {
   const [userWithdraws, setUserWithdraws] = useState<any[]>([]);
   const [userWithdrawsName, setUserWithdrawsName] = useState("");
 
+  // --- Block user ---
+  const [blockHours, setBlockHours] = useState("");
+
   // --- Delete ---
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<UserRow | null>(null);
+
+  // --- Search ---
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // --- Admin Message ---
+  const [msgDialogOpen, setMsgDialogOpen] = useState(false);
+  const [msgUser, setMsgUser] = useState<UserRow | null>(null);
+  const [msgText, setMsgText] = useState("");
+  const [msgAll, setMsgAll] = useState(false);
+
+  // --- Chat Panel ---
+  const [chatPanelOpen, setChatPanelOpen] = useState(false);
+  const [chatPanelUser, setChatPanelUser] = useState<UserRow | null>(null);
+  const [chatPanelMessages, setChatPanelMessages] = useState<any[]>([]);
+  const [chatPanelInput, setChatPanelInput] = useState("");
+  const [conversations, setConversations] = useState<any[]>([]);
+
+  // --- Question ---
+  const [questionDialogOpen, setQuestionDialogOpen] = useState(false);
+  const [questionUser, setQuestionUser] = useState<UserRow | null>(null);
+  const [questionText, setQuestionText] = useState("");
 
   // --- Withdraw detail modal ---
   const [withdrawDetailOpen, setWithdrawDetailOpen] = useState(false);
@@ -111,6 +211,46 @@ const Admin = () => {
 
   // ===================== LOAD =====================
   useEffect(() => { if (adminAuth) loadAll(); }, [adminAuth]);
+
+  // Auto refresh every 10 minutes
+  useEffect(() => {
+    if (!adminAuth) return;
+    const interval = setInterval(() => { loadAll(); }, 10 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [adminAuth]);
+
+  // Real-time notifications
+  useEffect(() => {
+    if (!adminAuth) return;
+
+    const topupSub = supabase
+      .channel("admin-topups")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "topups" }, async (payload) => {
+        const t = payload.new as any;
+        const { data: store } = await supabase.from("user_stores").select("store_level").eq("user_id", t.user_id).single();
+        const currentPack = store?.store_level || "Unknown";
+        const requestedPack = t.upgrade_to ? `➡️ ${t.upgrade_to}` : currentPack;
+        toast.info(`💰 شحن جديد — ${t.amount_usdt} USDT | ${requestedPack} | ${t.user_id.slice(0,8).toUpperCase()}`, { duration: 8000 });
+        loadAll();
+      })
+      .subscribe();
+
+    const withdrawSub = supabase
+      .channel("admin-withdrawals")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "withdrawals" }, async (payload) => {
+        const w = payload.new as any;
+        const { data: store } = await supabase.from("user_stores").select("store_level").eq("user_id", w.user_id).single();
+        const pack = store?.store_level || "Unknown";
+        toast.warning(`📤 سحب جديد — ${w.amount} USDT | ${pack} | ${w.user_id.slice(0,8).toUpperCase()}`, { duration: 8000 });
+        loadAll();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(topupSub);
+      supabase.removeChannel(withdrawSub);
+    };
+  }, [adminAuth]);
 
   const handleAdminLogin = async () => {
     setAdminLoginLoading(true);
@@ -125,6 +265,8 @@ const Admin = () => {
         toast.error("❌ ليس لديك صلاحية الوصول لهذا البانل");
         return;
       }
+      localStorage.setItem("adminAuth", "true");
+      localStorage.setItem("adminUser", adminUser);
       setAdminAuth(true);
     } catch (err: any) {
       toast.error(err.message || "Email أو Password غلط ❌");
@@ -135,8 +277,46 @@ const Admin = () => {
 
   const loadAll = async () => {
     setLoading(true);
-    await Promise.all([loadUsers(), loadTopups(), loadWithdrawals(), loadUpgrades(), loadWithdrawWindow()]);
+    await Promise.all([loadUsers(), loadTopups(), loadWithdrawals(), loadUpgrades(), loadWithdrawWindow(), loadConversations()]);
     setLoading(false);
+  };
+
+  const loadConversations = async () => {
+    // جيب آخر رسالة لكل user
+    const { data } = await supabase
+      .from("messages")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (!data) return;
+    // group by user_id
+    const map = new Map();
+    data.forEach((m: any) => {
+      if (!map.has(m.user_id)) map.set(m.user_id, m);
+    });
+    setConversations(Array.from(map.values()));
+  };
+
+  const openChatPanel = async (u: UserRow) => {
+    setChatPanelUser(u);
+    setChatPanelOpen(true);
+    const { data } = await supabase.from("messages").select("*").eq("user_id", u.user_id).order("created_at", { ascending: true });
+    if (data) setChatPanelMessages(data);
+    await supabase.from("messages").update({ read: true }).eq("user_id", u.user_id).eq("sender", "user").eq("read", false);
+  };
+
+  const sendChatPanel = async () => {
+    if (!chatPanelInput.trim() || !chatPanelUser) return;
+    await supabase.from("messages").insert({ user_id: chatPanelUser.user_id, sender: "admin", content: chatPanelInput.trim(), read: false });
+    setChatPanelInput("");
+    await openChatPanel(chatPanelUser);
+  };
+
+  const sendQuestion = async () => {
+    if (!questionText.trim() || !questionUser) return;
+    await supabase.from("messages").insert({ user_id: questionUser.user_id, sender: "admin", content: `❓ ${questionText.trim()}`, read: false });
+    toast.success(`✅ تم إرسال السؤال لـ ${questionUser.email}`);
+    setQuestionText("");
+    setQuestionDialogOpen(false);
   };
 
   const loadUsers = async () => {
@@ -161,7 +341,15 @@ const Admin = () => {
         created_at: u.created_at,
         last_profit_update: u.last_profit_update,
       };
-    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }).sort((a, b) => {
+      // paid users فوق، unpaid تحت
+      if (a.total_topup > 0 && b.total_topup === 0) return -1;
+      if (a.total_topup === 0 && b.total_topup > 0) return 1;
+      // بين paid — رتب حسب balance من الأكبر
+      if (a.total_topup > 0 && b.total_topup > 0) return b.balance - a.balance;
+      // بين unpaid — رتب حسب تاريخ التسجيل
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
     setUsers(mapped);
   };
 
@@ -221,9 +409,27 @@ const Admin = () => {
 
       const { data: store } = await supabase.from("user_stores").select("balance, total_topup, referred_by").eq("user_id", selectedTopup.user_id).single();
       if (store) {
-        const bonus = Math.round(amount * 0.05 * 100) / 100;
+        // احسب confirmed topups بعد الموافقة
+        const { data: confirmedTopups } = await supabase.from("topups").select("amount_usdt").eq("user_id", selectedTopup.user_id).eq("status", "confirmed");
+        const realTopup = (confirmedTopups || []).reduce((s: number, t: any) => s + Number(t.amount_usdt), 0);
+
+        // حدد الربح اليومي حسب المبلغ الحقيقي
+        const dailyProfit = realTopup >= 2000 ? 300 : realTopup >= 1500 ? 180 : realTopup >= 1000 ? 110 : realTopup >= 700 ? 75 : realTopup >= 320 ? 32 : realTopup >= 92 ? 9.5 : 0;
+
+        // احسب أيام من أول topup confirmed
+        const { data: firstTopup } = await supabase.from("topups").select("created_at").eq("user_id", selectedTopup.user_id).eq("status", "confirmed").order("created_at", { ascending: true }).limit(1).single();
+        const firstDate = firstTopup ? new Date(firstTopup.created_at) : new Date();
+        const daysActive = Math.floor((Date.now() - firstDate.getTime()) / 86400000);
+
+        // احسب withdrawals
+        const { data: withdrawalsData } = await supabase.from("withdrawals").select("amount").eq("user_id", selectedTopup.user_id).eq("status", "confirmed");
+        const totalWithdrawn = (withdrawalsData || []).reduce((s: number, w: any) => s + Number(w.amount), 0);
+
+        // balance الصحيح
+        const newBalance = Math.round(((realTopup * 1.05) + (daysActive * dailyProfit) - totalWithdrawn) * 100) / 100;
+
         const updateData: any = {
-          balance: Number(store.balance) + amount + bonus,
+          balance: newBalance,
           total_topup: Number(store.total_topup) + amount,
         };
         if (selectedTopup.upgrade_to) updateData.store_level = selectedTopup.upgrade_to;
@@ -233,7 +439,13 @@ const Admin = () => {
           const { data: ref } = await supabase.from("user_stores").select("balance, team_earnings").eq("referral_code", store.referred_by).single();
           if (ref) await supabase.from("user_stores").update({ balance: Number(ref.balance) + REFERRAL_COMMISSION, team_earnings: Number(ref.team_earnings || 0) + REFERRAL_COMMISSION }).eq("referral_code", store.referred_by);
         }
-        toast.success(`✅ تمت الموافقة — ${amount} USDT + ${bonus} bonus${selectedTopup.upgrade_to ? ` + ترقية لـ ${selectedTopup.upgrade_to}` : ""}`);
+        toast.success(`✅ تمت الموافقة — ${amount} USDT${selectedTopup.upgrade_to ? ` + ترقية لـ ${selectedTopup.upgrade_to}` : ""}`);
+        // إشعار للuser
+        await supabase.from("notifications").insert({
+          user_id: selectedTopup.user_id,
+          message: `✅ تمت الموافقة على شحنتك ${amount} USDT${selectedTopup.upgrade_to ? ` — تمت ترقيتك إلى ${selectedTopup.upgrade_to}` : ""}`,
+          type: "success",
+        });
       }
       setApproveDialogOpen(false);
       await loadAll();
@@ -242,7 +454,15 @@ const Admin = () => {
   };
 
   const handleReject = async (id: string) => {
+    const topup = topups.find(t => t.id === id);
     await supabase.from("topups").update({ status: "rejected" }).eq("id", id);
+    if (topup) {
+      await supabase.from("notifications").insert({
+        user_id: topup.user_id,
+        message: `❌ تم رفض طلب الشحن ${topup.amount_usdt} USDT — تواصل مع الدعم للمزيد`,
+        type: "error",
+      });
+    }
     toast.success("تم رفض الطلب");
     await loadTopups();
   };
@@ -250,6 +470,11 @@ const Admin = () => {
   // ===================== WITHDRAWALS =====================
   const handleApproveWithdraw = async (w: any) => {
     await supabase.from("withdrawals").update({ status: "confirmed" }).eq("id", w.id);
+    await supabase.from("notifications").insert({
+      user_id: w.user_id,
+      message: `✅ تم تأكيد سحبك ${w.amount} USDT — تم الإرسال إلى محفظتك`,
+      type: "success",
+    });
     toast.success(`✅ تم تأكيد سحب ${w.amount} USDT`);
     await loadWithdrawals();
   };
@@ -258,6 +483,11 @@ const Admin = () => {
     const { data: store } = await supabase.from("user_stores").select("balance").eq("user_id", w.user_id).single();
     if (store) await supabase.from("user_stores").update({ balance: Number(store.balance) + Number(w.amount) }).eq("user_id", w.user_id);
     await supabase.from("withdrawals").update({ status: "rejected" }).eq("id", w.id);
+    await supabase.from("notifications").insert({
+      user_id: w.user_id,
+      message: `❌ تم رفض طلب السحب ${w.amount} USDT — تم إرجاع الرصيد لحسابك`,
+      type: "error",
+    });
     toast.success("تم رفض السحب وإرجاع الرصيد");
     await loadAll();
   };
@@ -354,18 +584,78 @@ const Admin = () => {
     }
   };
 
+  // ===================== BLOCK =====================
+  const handleBlockUser = async (u: any, hours?: number) => {
+    const blockedSince = u.is_blocked ? u.blocked_since : new Date().toISOString();
+    const blockedUntil = hours ? new Date(Date.now() + hours * 3600000).toISOString() : null;
+    await supabase.from("user_stores").update({
+      is_blocked: true,
+      blocked_since: blockedSince,
+      blocked_until: blockedUntil,
+      last_profit_update: new Date().toISOString(),
+    } as any).eq("user_id", u.user_id);
+    toast.success(`🔒 تم حجب الحساب${hours ? ` لمدة ${hours} ساعة` : " بشكل دائم"}`);
+    await loadUsers();
+    setDetailOpen(false);
+  };
+
+  const handleUnblockUser = async (u: any) => {
+    // Calculate penalty: $10 per day blocked
+    const blockedSince = u.blocked_since ? new Date(u.blocked_since) : new Date();
+    const daysBlocked = Math.ceil((Date.now() - blockedSince.getTime()) / 86400000);
+    const penalty = daysBlocked * 10;
+
+    // Insert penalty topup request
+    await supabase.from("topups").insert({
+      user_id: u.user_id,
+      amount_usdt: penalty,
+      txid: `penalty_${u.user_id}_${Date.now()}`,
+      status: "pending",
+      screenshot_url: null,
+      upgrade_to: null,
+    });
+
+    // Unblock
+    await supabase.from("user_stores").update({
+      is_blocked: false,
+      blocked_since: null,
+      blocked_until: null,
+      last_profit_update: new Date().toISOString(),
+    } as any).eq("user_id", u.user_id);
+
+    toast.success(`✅ تم فك الحجب — طلب عقوبة deposit: $${penalty} (${daysBlocked} يوم × $10)`);
+    await loadUsers();
+    await loadTopups();
+    setDetailOpen(false);
+  };
+
   // ===================== DELETE =====================
   const handleDeleteUser = async () => {
     if (!userToDelete) return;
-    await supabase.from("user_stores").delete().eq("user_id", userToDelete.user_id);
-    await supabase.from("topups").delete().eq("user_id", userToDelete.user_id);
-    await supabase.from("withdrawals").delete().eq("user_id", userToDelete.user_id);
-    toast.success("✅ تم حذف المستخدم");
+    try {
+      await supabase.rpc('delete_user_completely', { target_user_id: userToDelete.user_id });
+      toast.success("✅ تم حذف المستخدم نهائياً من كل مكان");
+    } catch (err: any) {
+      toast.error(err.message || "حدث خطأ");
+    }
     setDeleteDialogOpen(false);
     await loadAll();
   };
 
-  // ===================== LOGIN SCREEN =====================
+  // ===================== ADMIN MESSAGE =====================
+  const handleSendMessage = async () => {
+    if (!msgText.trim()) return;
+    if (msgAll) {
+      const inserts = users.map(u => ({ user_id: u.user_id, message: msgText, type: "info", from_admin: true }));
+      await supabase.from("notifications").insert(inserts);
+      toast.success(`✅ تم إرسال الرسالة لـ ${users.length} مستخدم`);
+    } else if (msgUser) {
+      await supabase.from("notifications").insert({ user_id: msgUser.user_id, message: msgText, type: "info", from_admin: true });
+      toast.success(`✅ تم إرسال الرسالة لـ ${msgUser.email}`);
+    }
+    setMsgText("");
+    setMsgDialogOpen(false);
+  };
   if (!adminAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 px-4">
@@ -400,6 +690,9 @@ const Admin = () => {
   const pendingWithdrawals = withdrawals.filter(w => w.status === "pending");
   const otherWithdrawals = withdrawals.filter(w => w.status !== "pending");
   const totalBalance = users.reduce((s, u) => s + u.balance, 0);
+  const totalRealTopup = users.reduce((s, u) => s + u.total_topup, 0);
+  const totalWithdrawn = withdrawals.filter(w => w.status === "confirmed").reduce((s, w) => s + Number(w.amount), 0);
+  const myBalance = totalRealTopup - totalWithdrawn;
 
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="text-center space-y-2"><div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto"/><p className="text-muted-foreground">جاري التحميل...</p></div></div>;
 
@@ -407,62 +700,52 @@ const Admin = () => {
     <div className="min-h-screen bg-slate-50 pb-16">
       {/* ===== HEADER ===== */}
       <div className="bg-white border-b sticky top-0 z-10 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center">
               <Shield className="w-5 h-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-lg font-bold leading-none">لوحة الإدارة</h1>
+              <h1 className="text-sm font-bold leading-none">لوحة الإدارة</h1>
               <p className="text-xs text-muted-foreground">مرحباً {adminUser}</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right hidden md:block">
-              <p className="text-xs text-muted-foreground">إجمالي الأرصدة</p>
-              <p className="font-bold text-green-600">{totalBalance.toFixed(2)} $</p>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => setAdminAuth(false)}>خروج</Button>
+
+          {/* STATS IN HEADER */}
+          <div className="flex items-center gap-2 flex-1 justify-center flex-wrap">
+            {[
+              { label: "المستخدمون", value: users.length, color: "text-blue-600", bg: "bg-blue-50" },
+              { label: "ش.الشحن", value: pendingTopups.length, color: "text-orange-600", bg: "bg-orange-50" },
+              { label: "ش.السحب", value: pendingWithdrawals.length, color: "text-red-600", bg: "bg-red-50" },
+              { label: "الشحن", value: `${totalRealTopup.toFixed(0)}$`, color: "text-green-600", bg: "bg-green-50" },
+              { label: "السحب", value: `${totalWithdrawn.toFixed(0)}$`, color: "text-red-500", bg: "bg-red-50" },
+              { label: "Balance", value: `${myBalance.toFixed(0)}$`, color: "text-blue-600", bg: "bg-blue-50" },
+            ].map((s, i) => (
+              <div key={i} className={`${s.bg} rounded-lg px-2 py-1 text-center min-w-[60px]`}>
+                <p className={`text-sm font-bold ${s.color}`}>{s.value}</p>
+                <p className="text-[10px] text-gray-500">{s.label}</p>
+              </div>
+            ))}
+            {withdrawWindow && (
+              <div className={`rounded-lg px-2 py-1 text-center ${withdrawWindow.is_open ? "bg-green-50" : "bg-red-50"}`}>
+                {withdrawWindow.is_open ? (
+                  <Button variant="destructive" size="sm" className="h-6 text-xs px-2" onClick={handleCloseWindow}>🔒 إغلاق</Button>
+                ) : (
+                  <Button className="bg-green-600 hover:bg-green-700 text-white h-6 text-xs px-2" size="sm" onClick={handleOpenWindow}>✅ فتح</Button>
+                )}
+                <p className="text-[10px] text-gray-500 mt-0.5">نافذة السحب</p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <Button variant="outline" size="sm" onClick={() => loadAll()} title="تحديث">🔄</Button>
+            <Button variant="outline" size="sm" onClick={() => { localStorage.removeItem("adminAuth"); localStorage.removeItem("adminUser"); setAdminAuth(false); }}>خروج</Button>
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        {/* ===== STATS ROW ===== */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { label: "المستخدمون", value: users.length, color: "text-blue-600", bg: "bg-blue-50" },
-            { label: "طلبات الشحن", value: pendingTopups.length, color: "text-orange-600", bg: "bg-orange-50" },
-            { label: "طلبات السحب", value: pendingWithdrawals.length, color: "text-red-600", bg: "bg-red-50" },
-            { label: "إجمالي الأرصدة", value: `${totalBalance.toFixed(0)}$`, color: "text-green-600", bg: "bg-green-50" },
-          ].map((s, i) => (
-            <div key={i} className={`${s.bg} rounded-2xl p-4 text-center`}>
-              <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-              <p className="text-xs text-gray-500 mt-1">{s.label}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* ===== WITHDRAWAL WINDOW CONTROL ===== */}
-        {withdrawWindow && (
-          <div className={`rounded-2xl p-4 flex items-center justify-between ${withdrawWindow.is_open ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
-            <div>
-              <p className={`font-bold text-sm ${withdrawWindow.is_open ? "text-green-700" : "text-red-700"}`}>
-                {withdrawWindow.is_open ? "✅ نافذة السحب مفتوحة" : "🔒 نافذة السحب مغلقة"}
-              </p>
-              {withdrawWindow.is_open && withdrawWindow.opened_at && (
-                <p className="text-xs text-green-600 mt-0.5">
-                  فُتحت: {new Date(withdrawWindow.opened_at).toLocaleString("ar")} · تُغلق بعد {withdrawWindow.window_minutes} دقيقة
-                </p>
-              )}
-            </div>
-            {withdrawWindow.is_open ? (
-              <Button variant="destructive" size="sm" onClick={handleCloseWindow}>🔒 إغلاق الآن</Button>
-            ) : (
-              <Button className="bg-green-600 hover:bg-green-700 text-white" size="sm" onClick={handleOpenWindow}>✅ فتح نافذة السحب</Button>
-            )}
-          </div>
-        )}
+      <div className="max-w-7xl mx-auto px-4 py-3 space-y-3">
 
         {/* ===== TABS ===== */}
         <div className="flex gap-2 flex-wrap">
@@ -471,6 +754,7 @@ const Admin = () => {
             { key: "withdrawals", label: "طلبات السحب", count: pendingWithdrawals.length, color: "bg-orange-500" },
             { key: "users", label: `المستخدمون (${users.length})`, count: 0, color: "" },
             { key: "upgrades", label: "الترقيات", count: upgrades.length, color: "bg-purple-500" },
+            { key: "chat", label: "💬 المحادثات", count: 0, color: "" },
           ].map(tab => (
             <Button key={tab.key} variant={activeTab === tab.key ? "default" : "outline"} onClick={() => setActiveTab(tab.key)} className="relative">
               {tab.label}
@@ -482,42 +766,73 @@ const Admin = () => {
         {/* ===== TOPUPS TAB ===== */}
         {activeTab === "topups" && (
           <div className="space-y-4">
+
+            {/* --- STATS --- */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-green-50 rounded-2xl p-3 text-center border border-green-100">
+                <p className="text-xs text-green-600 mb-1">إجمالي الشحنات المقبولة</p>
+                <p className="text-xl font-bold text-green-700">
+                  {topups.filter(t => t.status === "confirmed").reduce((s, t) => s + Number(t.amount_usdt), 0).toFixed(2)} $
+                </p>
+              </div>
+              <div className="bg-orange-50 rounded-2xl p-3 text-center border border-orange-100">
+                <p className="text-xs text-orange-600 mb-1">طلبات في الانتظار</p>
+                <p className="text-xl font-bold text-orange-700">
+                  {topups.filter(t => t.status === "pending").reduce((s, t) => s + Number(t.amount_usdt), 0).toFixed(2)} $
+                </p>
+              </div>
+              <div className="bg-blue-50 rounded-2xl p-3 text-center border border-blue-100">
+                <p className="text-xs text-blue-600 mb-1">عدد الشاحنين</p>
+                <p className="text-xl font-bold text-blue-700">
+                  {new Set(topups.filter(t => t.status === "confirmed").map(t => t.user_id)).size} شخص
+                </p>
+              </div>
+            </div>
             {pendingTopups.length > 0 && (
-              <div className="space-y-3">
-                <h2 className="text-lg font-bold text-orange-600">⏳ في الانتظار ({pendingTopups.length})</h2>
-                {pendingTopups.map(t => (
+              <div className="space-y-2">
+                <h2 className="text-sm font-bold text-orange-600">⏳ في الانتظار ({pendingTopups.length})</h2>
+                {pendingTopups.map(t => {
+                  const userInfo = users.find(u => u.user_id === t.user_id);
+                  const userEmail = userInfo?.email || "—";
+                  const userPack = userInfo?.store_level || "—";
+                  return (
                   <Card key={t.id} className="border-orange-200 shadow-sm">
-                    <CardContent className="p-4">
-                      <div className="flex flex-col md:flex-row gap-4">
-                        <div className="md:w-1/4 cursor-pointer group" onClick={() => { setImgUrl(t.screenshot_url); setImgDialogOpen(true); }}>
+                    <CardContent className="p-3">
+                      <div className="flex gap-3 items-center">
+                        {/* صورة صغيرة */}
+                        <div className="w-16 h-16 flex-shrink-0 cursor-pointer group relative rounded-lg overflow-hidden border" onClick={() => { setImgUrl(t.screenshot_url); setImgDialogOpen(true); }}>
                           {t.screenshot_url ? (
-                            <div className="relative">
-                              <img src={t.screenshot_url} className="w-full h-36 object-cover rounded-xl border group-hover:opacity-80 transition-opacity" />
-                              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-xl">
-                                <ZoomIn className="w-8 h-8 text-white" />
+                            <>
+                              <img src={t.screenshot_url} className="w-full h-full object-cover group-hover:opacity-80 transition-opacity" />
+                              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/20">
+                                <ZoomIn className="w-4 h-4 text-white" />
                               </div>
-                            </div>
+                            </>
                           ) : (
-                            <div className="w-full h-36 bg-muted rounded-xl flex items-center justify-center text-xs text-muted-foreground">لا يوجد إثبات</div>
+                            <div className="w-full h-full bg-muted flex items-center justify-center text-xs text-muted-foreground">—</div>
                           )}
                         </div>
-                        <div className="flex-1 space-y-3">
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                            <div><span className="text-muted-foreground">المبلغ: </span><span className="font-bold text-green-600 text-lg">{t.amount_usdt} USDT</span></div>
-                            <div><span className="text-muted-foreground">Account: </span><span className="font-mono font-bold">{t.user_id.slice(0,8).toUpperCase()}</span></div>
-                            <div><span className="text-muted-foreground">التاريخ: </span><span>{new Date(t.created_at).toLocaleDateString("en-GB")}</span></div>
-                            {t.upgrade_to && <div><span className="text-muted-foreground">ترقية إلى: </span><Badge className="bg-purple-500">⬆️ {t.upgrade_to}</Badge></div>}
+                        {/* التفاصيل */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-green-600">{t.amount_usdt} USDT</span>
+                            <span className="font-mono text-xs text-muted-foreground">{t.user_id.slice(0,8).toUpperCase()}</span>
+                            <Badge className="text-xs bg-slate-100 text-slate-700 border-0">{userPack}</Badge>
+                            {t.upgrade_to && <Badge className="bg-purple-500 text-xs">⬆️ {t.upgrade_to}</Badge>}
                           </div>
-                          {t.upgrade_to && <div className="bg-purple-50 border border-purple-200 rounded-xl px-3 py-2 text-xs text-purple-700 font-bold">⬆️ طلب ترقية — سيتم تغيير الباقة عند القبول</div>}
-                          <div className="flex gap-2">
-                            <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white h-10 font-bold" onClick={() => openApproveDialog(t)}><CheckCircle className="w-4 h-4 mr-1" /> قبول</Button>
-                            <Button className="flex-1 h-10 font-bold" variant="destructive" onClick={() => handleReject(t.id)}><XCircle className="w-4 h-4 mr-1" /> رفض</Button>
-                          </div>
+                          <p className="text-xs text-blue-600 truncate mt-0.5">{userEmail}</p>
+                          <p className="text-xs text-muted-foreground">{new Date(t.created_at).toLocaleString("en-GB", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" })}</p>
+                        </div>
+                        {/* أزرار */}
+                        <div className="flex gap-1 flex-shrink-0">
+                          <Button className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-xs font-bold" onClick={() => openApproveDialog(t)}><CheckCircle className="w-3 h-3 mr-1" /> قبول</Button>
+                          <Button className="h-8 px-3 text-xs font-bold" variant="destructive" onClick={() => handleReject(t.id)}><XCircle className="w-3 h-3 mr-1" /> رفض</Button>
                         </div>
                       </div>
                     </CardContent>
                   </Card>
-                ))}
+                  );
+                })}
               </div>
             )}
             {pendingTopups.length === 0 && <Card className="border-dashed"><CardContent className="p-10 text-center text-muted-foreground">✅ لا توجد طلبات شحن في الانتظار</CardContent></Card>}
@@ -549,6 +864,28 @@ const Admin = () => {
         {activeTab === "withdrawals" && (
           <div className="space-y-4">
 
+            {/* --- STATS --- */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-green-50 rounded-2xl p-3 text-center border border-green-100">
+                <p className="text-xs text-green-600 mb-1">إجمالي السحبات المقبولة</p>
+                <p className="text-xl font-bold text-green-700">
+                  {withdrawals.filter(w => w.status === "confirmed").reduce((s, w) => s + Number(w.amount), 0).toFixed(2)} $
+                </p>
+              </div>
+              <div className="bg-orange-50 rounded-2xl p-3 text-center border border-orange-100">
+                <p className="text-xs text-orange-600 mb-1">طلبات في الانتظار</p>
+                <p className="text-xl font-bold text-orange-700">
+                  {withdrawals.filter(w => w.status === "pending").reduce((s, w) => s + Number(w.amount), 0).toFixed(2)} $
+                </p>
+              </div>
+              <div className="bg-blue-50 rounded-2xl p-3 text-center border border-blue-100">
+                <p className="text-xs text-blue-600 mb-1">عدد المستفيدين</p>
+                <p className="text-xl font-bold text-blue-700">
+                  {new Set(withdrawals.filter(w => w.status === "confirmed").map(w => w.user_id)).size} شخص
+                </p>
+              </div>
+            </div>
+
             {/* --- PENDING --- */}
             {pendingWithdrawals.length > 0 ? (
               <div className="space-y-2">
@@ -557,6 +894,10 @@ const Admin = () => {
                   <div className="divide-y divide-border">
                     {pendingWithdrawals.map(w => {
                       const prevConfirmed = withdrawals.filter(x => x.user_id === w.user_id && x.id !== w.id);
+                      const userTotalWithdrawn = withdrawals.filter(x => x.user_id === w.user_id && x.status === "confirmed").reduce((s, x) => s + Number(x.amount), 0);
+                      const userInfo = users.find(u => u.user_id === w.user_id);
+                      const userEmail = userInfo?.email || "—";
+                      const userPack = userInfo?.store_level || "—";
                       const hasDuplicates = pendingWithdrawals.filter(x => x.user_id === w.user_id).length > 1;
                       return (
                         <div
@@ -569,12 +910,15 @@ const Admin = () => {
                               <span className="text-xs font-bold text-orange-600">{w.user_id.slice(0,2).toUpperCase()}</span>
                             </div>
                             <div>
-                              <p className="text-sm font-bold font-mono">{w.user_id.slice(0,8).toUpperCase()}</p>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-bold font-mono">{w.user_id.slice(0,8).toUpperCase()}</p>
+                                <Badge className="text-xs bg-slate-100 text-slate-700 border-0">{userPack}</Badge>
+                                {hasDuplicates && <Badge className="bg-red-500 text-white text-xs">طلبات متعددة</Badge>}
+                              </div>
+                              <p className="text-xs text-blue-600">{userEmail}</p>
                               <p className="text-xs text-muted-foreground">{w.method} · {new Date(w.created_at).toLocaleDateString("en-GB")}</p>
+                              <p className="text-xs text-blue-600 font-medium">إجمالي سحباته: {userTotalWithdrawn.toFixed(2)} $</p>
                             </div>
-                            {hasDuplicates && (
-                              <Badge className="bg-red-500 text-white text-xs">طلبات متعددة</Badge>
-                            )}
                           </div>
                           <div className="flex items-center gap-3">
                             <span className="font-bold text-red-500 text-base">{w.amount} USDT</span>
@@ -632,16 +976,51 @@ const Admin = () => {
 
         {/* ===== USERS TAB ===== */}
         {activeTab === "users" && (
+          <div className="space-y-2">
+
           <Card className="shadow-sm">
-            <CardHeader>
-              <div className="flex items-center justify-between">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between mb-2">
                 <CardTitle>المستخدمون ({users.length})</CardTitle>
-                <div className="text-sm text-green-600 font-bold">💰 إجمالي: {totalBalance.toFixed(2)} $</div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" className="h-8 text-xs bg-purple-600 hover:bg-purple-700 text-white" onClick={() => { setMsgAll(true); setMsgUser(null); setMsgDialogOpen(true); }}>💬 رسالة للكل</Button>
+                  <Input
+                    placeholder="🔍 بحث بـ email أو ID..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="h-8 text-xs w-48"
+                  />
+                  <div className="text-sm text-green-600 font-bold">💰 {totalBalance.toFixed(0)}$</div>
+                </div>
+              </div>
+              {/* --- PACK STATS --- */}
+              <div className="flex gap-2 flex-wrap">
+                {[
+                  { name: "Small shop", color: "bg-orange-50 border-orange-200", text: "text-orange-700" },
+                  { name: "Medium shop", color: "bg-blue-50 border-blue-200", text: "text-blue-700" },
+                  { name: "Large shop", color: "bg-violet-50 border-violet-200", text: "text-violet-700" },
+                  { name: "Mega shop", color: "bg-pink-50 border-pink-200", text: "text-pink-700" },
+                  { name: "VIP", color: "bg-amber-50 border-amber-200", text: "text-amber-700" },
+                ].map(pack => {
+                  const packUsers = users.filter(u => u.store_level === pack.name && u.total_topup > 0);
+                  const packTotal = packUsers.reduce((s, u) => s + u.total_topup, 0);
+                  return (
+                    <div key={pack.name} className={`${pack.color} rounded-xl px-3 py-1.5 border flex items-center gap-2`}>
+                      <span className={`text-xs font-bold ${pack.text}`}>{pack.name}</span>
+                      <span className={`text-sm font-bold ${pack.text}`}>{packUsers.length}</span>
+                      <span className={`text-xs ${pack.text} opacity-70`}>{packTotal.toFixed(0)}$</span>
+                    </div>
+                  );
+                })}
+                <div className="bg-gray-100 border-gray-200 rounded-xl px-3 py-1.5 border flex items-center gap-2">
+                  <span className="text-xs font-bold text-gray-500">⚪ Inactive</span>
+                  <span className="text-sm font-bold text-gray-600">{users.filter(u => u.total_topup === 0).length}</span>
+                </div>
               </div>
             </CardHeader>
-            <CardContent className="overflow-x-auto p-0">
+            <CardContent className="overflow-auto p-0 max-h-[70vh]">
               <Table>
-                <TableHeader>
+                <TableHeader className="sticky top-0 z-10">
                   <TableRow className="bg-slate-50">
                     <TableHead className="pl-4">Account</TableHead>
                     <TableHead>Email</TableHead>
@@ -655,13 +1034,26 @@ const Admin = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {users.map(u => (
+                  {users.filter(u => {
+                    if (!searchQuery) return true;
+                    const q = searchQuery.toLowerCase();
+                    return u.email.toLowerCase().includes(q) || u.user_id.toLowerCase().includes(q);
+                  }).map(u => (
                     <TableRow key={u.user_id} className="hover:bg-slate-50/50 cursor-pointer" onClick={() => openDetail(u)}>
                       <TableCell className="font-mono text-xs font-bold pl-4">{u.user_id.slice(0,8).toUpperCase()}</TableCell>
                       <TableCell className="text-xs text-blue-600 max-w-[140px] truncate">{u.email || "—"}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <span className="text-xs whitespace-nowrap">{u.store_level}</span>
+                          <Badge className={`text-xs ${
+                            u.total_topup === 0 ? "bg-gray-300 text-gray-600" :
+                            u.store_level === "VIP" ? "bg-amber-500" :
+                            u.store_level === "Mega shop" ? "bg-pink-500" :
+                            u.store_level === "Large shop" ? "bg-violet-500" :
+                            u.store_level === "Medium shop" ? "bg-blue-500" :
+                            "bg-orange-500"
+                          }`}>
+                            {u.total_topup === 0 ? "❌ لا" : u.store_level}
+                          </Badge>
                           <Button size="sm" variant="ghost" className="h-5 w-5 p-0 opacity-50 hover:opacity-100" onClick={() => openLevelDialog(u)}><Edit className="w-3 h-3" /></Button>
                         </div>
                       </TableCell>
@@ -682,6 +1074,10 @@ const Admin = () => {
                         <div className="flex gap-1">
                           {/* View Details */}
                           <Button size="sm" variant="outline" className="h-7 w-7 p-0" title="عرض التفاصيل" onClick={() => openDetail(u)}><Eye className="w-3 h-3" /></Button>
+                          {/* Chat */}
+                          <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-emerald-600 border-emerald-200 hover:bg-emerald-50" title="محادثة" onClick={() => openChatPanel(u)}>💬</Button>
+                          {/* Question */}
+                          <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-orange-600 border-orange-200 hover:bg-orange-50" title="إرسال سؤال" onClick={() => { setQuestionUser(u); setQuestionDialogOpen(true); }}>❓</Button>
                           {/* Add Balance */}
                           <Button size="sm" className="h-7 w-7 p-0 bg-green-600 hover:bg-green-700 text-white" title="إضافة رصيد" onClick={() => openBalanceDialog(u, "add")}><ArrowUpCircle className="w-3 h-3" /></Button>
                           {/* Subtract Balance */}
@@ -698,6 +1094,108 @@ const Admin = () => {
               </Table>
             </CardContent>
           </Card>
+          </div>
+        )}
+
+        {/* ===== CHAT TAB ===== */}
+        {activeTab === "chat" && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-[70vh]">
+            {/* قائمة المحادثات */}
+            <Card className="shadow-sm overflow-hidden">
+              <CardHeader className="p-3 border-b">
+                <CardTitle className="text-sm">💬 المحادثات ({conversations.length})</CardTitle>
+              </CardHeader>
+              <div className="overflow-y-auto h-full divide-y">
+                {conversations.length === 0 ? (
+                  <p className="text-center text-muted-foreground text-sm py-8">لا توجد محادثات بعد</p>
+                ) : conversations.map(c => {
+                  const userInfo = users.find(u => u.user_id === c.user_id);
+                  return (
+                    <div
+                      key={c.user_id}
+                      className={`p-3 cursor-pointer hover:bg-slate-50 transition-colors ${chatPanelUser?.user_id === c.user_id ? "bg-emerald-50 border-r-2 border-emerald-500" : ""}`}
+                      onClick={() => {
+                        const u = users.find(x => x.user_id === c.user_id);
+                        if (u) openChatPanel(u);
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                          <span className="text-xs font-bold text-emerald-600">{c.user_id.slice(0,2).toUpperCase()}</span>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold truncate">{userInfo?.email || c.user_id.slice(0,8).toUpperCase()}</p>
+                          <p className="text-xs text-muted-foreground truncate">{c.content}</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+
+            {/* نافذة المحادثة */}
+            <Card className="shadow-sm col-span-2 flex flex-col overflow-hidden">
+              {!chatPanelUser ? (
+                <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+                  اختر محادثة للرد
+                </div>
+              ) : (
+                <>
+                  <CardHeader className="p-3 border-b flex-shrink-0">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                          <span className="text-xs font-bold text-emerald-600">{chatPanelUser.user_id.slice(0,2).toUpperCase()}</span>
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold">{chatPanelUser.email}</p>
+                          <p className="text-xs text-muted-foreground">{chatPanelUser.store_level}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!confirm("واش تبغي تمسح كل المحادثة؟")) return;
+                          await supabase.from("messages").delete().eq("user_id", chatPanelUser.user_id);
+                          setChatPanelMessages([]);
+                          toast.success("✅ تم مسح المحادثة");
+                        }}
+                        className="text-red-400 hover:text-red-600 text-sm px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
+                      >🗑️</button>
+                    </div>
+                  </CardHeader>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {chatPanelMessages.map(m => (
+                      <div key={m.id} className={`flex ${m.sender === "user" ? "justify-start" : "justify-end"}`}>
+                        <div className={`max-w-[75%] px-3 py-2 rounded-2xl text-sm ${
+                          m.sender === "user"
+                            ? "bg-slate-100 text-slate-800 rounded-tl-sm"
+                            : "bg-emerald-500 text-white rounded-tr-sm"
+                        }`}>
+                          <p>{m.content}</p>
+                          <p className="text-[10px] opacity-60 mt-0.5">
+                            {new Date(m.created_at).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="p-3 border-t flex gap-2 flex-shrink-0">
+                    <Input
+                      placeholder="اكتب ردك..."
+                      value={chatPanelInput}
+                      onChange={e => setChatPanelInput(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && sendChatPanel()}
+                      className="text-sm"
+                    />
+                    <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={sendChatPanel}>
+                      إرسال
+                    </Button>
+                  </div>
+                </>
+              )}
+            </Card>
+          </div>
         )}
 
         {/* ===== UPGRADES TAB ===== */}
@@ -727,19 +1225,27 @@ const Admin = () => {
 
       {/* ===== USER DETAIL MODAL ===== */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Eye className="w-5 h-5 text-primary" />
-              تفاصيل المستخدم — {detailUser?.user_id.slice(0,8).toUpperCase()}
+            <DialogTitle className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Eye className="w-5 h-5 text-primary" />
+                تفاصيل المستخدم — {detailUser?.user_id.slice(0,8).toUpperCase()}
+              </div>
+              {detailUser && (
+                <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white gap-1 text-xs" onClick={() => handleImpersonate(detailUser)}>
+                  <LogIn className="w-3 h-3" /> عرض الحساب
+                </Button>
+              )}
             </DialogTitle>
           </DialogHeader>
           {detailUser && (
             <Tabs defaultValue="overview" dir="rtl">
-              <TabsList className="w-full grid grid-cols-4">
+              <TabsList className="w-full grid grid-cols-5">
                 <TabsTrigger value="overview">نظرة عامة</TabsTrigger>
                 <TabsTrigger value="topups">الشحنات</TabsTrigger>
                 <TabsTrigger value="withdrawals">السحوبات</TabsTrigger>
+                <TabsTrigger value="messages">💬 الردود</TabsTrigger>
                 <TabsTrigger value="team">الفريق</TabsTrigger>
               </TabsList>
 
@@ -798,10 +1304,10 @@ const Admin = () => {
                     <TableBody>
                       {detailTopups.map(t => (
                         <TableRow key={t.id}>
-                          <TableCell className="font-bold">{t.amount_usdt} USDT</TableCell>
-                          <TableCell>{t.upgrade_to ? <Badge className="bg-purple-500 text-xs">ترقية</Badge> : <Badge variant="outline" className="text-xs">شحن</Badge>}</TableCell>
-                          <TableCell><Badge variant={t.status === "confirmed" ? "default" : "destructive"} className="text-xs">{t.status === "confirmed" ? "✅" : t.status === "pending" ? "⏳" : "❌"}</Badge></TableCell>
-                          <TableCell className="text-xs">{new Date(t.created_at).toLocaleDateString("en-GB")}</TableCell>
+                          <TableCell className="font-bold text-sm">{t.amount_usdt} USDT</TableCell>
+                          <TableCell>{t.upgrade_to ? <Badge className="bg-purple-500 text-xs">⬆️ {t.upgrade_to}</Badge> : <Badge variant="outline" className="text-xs">شحن</Badge>}</TableCell>
+                          <TableCell><Badge variant={t.status === "confirmed" ? "default" : t.status === "pending" ? "outline" : "destructive"} className="text-xs">{t.status === "confirmed" ? "✅" : t.status === "pending" ? "⏳" : "❌"}</Badge></TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{new Date(t.created_at).toLocaleString("en-GB", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" })}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -817,15 +1323,23 @@ const Admin = () => {
                     <TableBody>
                       {detailWithdrawals.map(w => (
                         <TableRow key={w.id}>
-                          <TableCell className="font-bold text-red-500">{w.amount} USDT</TableCell>
+                          <TableCell className="font-bold text-red-500 text-sm">{w.amount} USDT</TableCell>
                           <TableCell className="text-xs">{w.method}</TableCell>
-                          <TableCell><Badge variant={w.status === "confirmed" ? "default" : "destructive"} className="text-xs">{w.status === "confirmed" ? "✅" : w.status === "pending" ? "⏳" : "❌"}</Badge></TableCell>
-                          <TableCell className="text-xs">{new Date(w.created_at).toLocaleDateString("en-GB")}</TableCell>
+                          <TableCell><Badge variant={w.status === "confirmed" ? "default" : w.status === "pending" ? "outline" : "destructive"} className="text-xs">{w.status === "confirmed" ? "✅" : w.status === "pending" ? "⏳" : "❌"}</Badge></TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{new Date(w.created_at).toLocaleString("en-GB", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" })}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 )}
+              </TabsContent>
+
+              {/* Messages & Replies */}
+              <TabsContent value="messages" className="mt-4 space-y-3">
+                <UserReplies userId={detailUser.user_id} onSendReply={async (msg) => {
+                  await supabase.from("notifications").insert({ user_id: detailUser.user_id, message: msg, type: "info", from_admin: true });
+                  toast.success("✅ تم إرسال الرسالة");
+                }} />
               </TabsContent>
 
               {/* Team */}
@@ -938,6 +1452,129 @@ const Admin = () => {
         </DialogContent>
       </Dialog>
 
+      {/* ===== CHAT PANEL ===== */}
+      {chatPanelOpen && chatPanelUser && (
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setChatPanelOpen(false)}>
+          <div className="w-full max-w-sm bg-white shadow-2xl flex flex-col h-full" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white p-4 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
+                  <span className="text-sm font-bold">{chatPanelUser.user_id.slice(0,2).toUpperCase()}</span>
+                </div>
+                <div>
+                  <p className="text-sm font-bold truncate max-w-[180px]">{chatPanelUser.email}</p>
+                  <p className="text-xs text-emerald-100">{chatPanelUser.store_level}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    if (!confirm("واش تبغي تمسح كل المحادثة؟")) return;
+                    await supabase.from("messages").delete().eq("user_id", chatPanelUser.user_id);
+                    setChatPanelMessages([]);
+                    toast.success("✅ تم مسح المحادثة");
+                  }}
+                  className="text-white/70 hover:text-red-300 text-sm px-2 py-1 rounded-lg hover:bg-white/10 transition-colors"
+                  title="مسح المحادثة"
+                >
+                  🗑️
+                </button>
+                <button onClick={() => setChatPanelOpen(false)} className="text-white/70 hover:text-white text-xl">✕</button>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
+              {chatPanelMessages.length === 0 ? (
+                <p className="text-center text-muted-foreground text-sm py-8">لا توجد رسائل بعد</p>
+              ) : chatPanelMessages.map(m => (
+                <div key={m.id} className={`flex ${m.sender === "user" ? "justify-start" : "justify-end"}`}>
+                  <div className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm shadow-sm ${
+                    m.sender === "user"
+                      ? "bg-white text-gray-800 rounded-tl-sm"
+                      : "bg-emerald-500 text-white rounded-tr-sm"
+                  }`}>
+                    <p>{m.content}</p>
+                    <p className="text-[10px] opacity-60 mt-0.5">
+                      {new Date(m.created_at).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Input */}
+            <div className="p-3 border-t bg-white flex gap-2 flex-shrink-0">
+              <Input
+                placeholder="اكتب رسالتك..."
+                value={chatPanelInput}
+                onChange={e => setChatPanelInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && sendChatPanel()}
+                className="text-sm"
+              />
+              <Button className="bg-emerald-600 hover:bg-emerald-700 text-white flex-shrink-0" onClick={sendChatPanel}>
+                إرسال
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== QUESTION DIALOG ===== */}
+      <Dialog open={questionDialogOpen} onOpenChange={setQuestionDialogOpen}>
+        <DialogContent className="max-w-sm" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>❓ إرسال سؤال لـ {questionUser?.email?.split("@")[0]}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">سيصل السؤال للمستخدم في chat ويقدر يرد عليك مباشرة</p>
+            <textarea
+              className="w-full border rounded-xl p-3 text-sm resize-none h-24 focus:outline-none focus:ring-2 focus:ring-orange-400"
+              placeholder="مثال: واش تريد تجدد باقتك؟"
+              value={questionText}
+              onChange={e => setQuestionText(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setQuestionDialogOpen(false)}>إلغاء</Button>
+            <Button className="bg-orange-500 hover:bg-orange-600 text-white" onClick={sendQuestion} disabled={!questionText.trim()}>
+              إرسال السؤال ❓
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== MESSAGE DIALOG ===== */}
+      <Dialog open={msgDialogOpen} onOpenChange={setMsgDialogOpen}>
+        <DialogContent className="max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              💬 {msgAll ? "رسالة لجميع المستخدمين" : `رسالة لـ ${msgUser?.email || ""}`}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {msgAll && (
+              <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
+                <p className="text-xs text-orange-700 font-bold">⚠️ ستُرسل هاد الرسالة لـ {users.length} مستخدم</p>
+              </div>
+            )}
+            <textarea
+              className="w-full border rounded-xl p-3 text-sm resize-none h-28 focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="اكتب رسالتك هنا..."
+              value={msgText}
+              onChange={e => setMsgText(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMsgDialogOpen(false)}>إلغاء</Button>
+            <Button className="bg-purple-600 hover:bg-purple-700 text-white" onClick={handleSendMessage} disabled={!msgText.trim()}>
+              إرسال 💬
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ===== DELETE DIALOG ===== */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
@@ -975,6 +1612,9 @@ const Admin = () => {
                 <p className="text-xs text-red-400 mb-1">المبلغ المطلوب سحبه</p>
                 <p className="text-4xl font-bold text-red-500">{selectedWithdraw.amount}</p>
                 <p className="text-sm text-red-400 mt-1">USDT</p>
+                <div className="mt-2 pt-2 border-t border-red-100">
+                  <p className="text-xs text-red-400">إجمالي كل سحباته المقبولة: <span className="font-bold text-red-600">{withdrawals.filter(x => x.user_id === selectedWithdraw.user_id && x.status === "confirmed").reduce((s, x) => s + Number(x.amount), 0).toFixed(2)} $</span></p>
+                </div>
               </div>
 
               {/* Fields grid */}
@@ -988,8 +1628,8 @@ const Admin = () => {
                   <p className="text-sm font-bold">{selectedWithdraw.method}</p>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3">
-                  <p className="text-xs text-muted-foreground mb-1">التاريخ</p>
-                  <p className="text-sm font-bold">{new Date(selectedWithdraw.created_at).toLocaleDateString("en-GB")}</p>
+                  <p className="text-xs text-muted-foreground mb-1">التاريخ والوقت</p>
+                  <p className="text-sm font-bold">{new Date(selectedWithdraw.created_at).toLocaleString("en-GB", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit" })}</p>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 col-span-2">
                   <p className="text-xs text-muted-foreground mb-1">عنوان المحفظة</p>
@@ -1017,7 +1657,7 @@ const Admin = () => {
                           <span className="text-xs text-muted-foreground w-4 text-center">{i + 1}</span>
                           <div>
                             <p className="text-xs font-bold text-foreground">{pw.amount} USDT</p>
-                            <p className="text-xs text-muted-foreground">{new Date(pw.created_at).toLocaleDateString("en-GB")}</p>
+                            <p className="text-xs text-muted-foreground">{new Date(pw.created_at).toLocaleString("en-GB", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" })}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">

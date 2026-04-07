@@ -14,34 +14,12 @@ import { Input } from "@/components/ui/input";
 
 const generateReferralCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
 
-// Profit per second based on store_level (new rates)
 const PROFIT_PER_SECOND: Record<string, number> = {
-  "Small shop": 2.8 / 86400,
-  "Medium shop": 11 / 86400,
-  "Large shop": 24 / 86400,
-  "Mega shop": 36 / 86400,
-  VIP: 55 / 86400,
-};
-
-// Get profit rate based on total_topup (old packs keep old rates, new packs get new rates)
-const getProfitPerSecond = (totalTopup: number, storeLevel: string): number => {
-  const t = Number(totalTopup);
-  // New packs (exact amounts)
-  if (t === 2200) return 78 / 86400;
-  if (t === 1650) return 55 / 86400;
-  if (t === 1100) return 36 / 86400;
-  if (t === 750)  return 24 / 86400;
-  if (t === 350)  return 11 / 86400;
-  if (t === 99)   return 2.8 / 86400;
-  if (t === 45)   return 1.2 / 86400;
-  // Old packs (keep original rates)
-  if (t >= 2000) return 300 / 86400;
-  if (t >= 1500) return 180 / 86400;
-  if (t >= 1000) return 110 / 86400;
-  if (t >= 700)  return 75 / 86400;
-  if (t >= 320)  return 32 / 86400;
-  if (t >= 92)   return 9.5 / 86400;
-  return PROFIT_PER_SECOND[storeLevel] || 1.2 / 86400;
+  "Small shop": 9.5 / 86400,
+  "Medium shop": 32 / 86400,
+  "Large shop": 75 / 86400,
+  "Mega shop": 110 / 86400,
+  VIP: 180 / 86400,
 };
 
 const PACK_PRICE: Record<string, number> = {
@@ -269,7 +247,7 @@ const Dashboard = () => {
       const now = Date.now();
       const elapsed = Math.max(0, (now - lastTickRef.current) / 1000);
       lastTickRef.current = now;
-      const perSecond = getProfitPerSecond(storeData.total_topup, level);
+      const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
       const delta = perSecond * elapsed;
 
       liveProfitRef.current += delta;
@@ -278,27 +256,7 @@ const Dashboard = () => {
       setLiveBalance(liveBalanceRef.current);
     }, 1000);
 
-    // Refresh from DB every 60 seconds to stay in sync with cron job
-    const syncInterval = setInterval(async () => {
-      if (!userIdRef.current || isImpersonating) return;
-      const { data: store } = await supabase.from("user_stores")
-        .select("balance, total_profit").eq("user_id", userIdRef.current).maybeSingle();
-      if (store) {
-        const dbBalance = Number(store.balance || 0);
-        const dbProfit = Number(store.total_profit || 0);
-        // Only update if DB value is higher (cron job added profit)
-        if (dbBalance > liveBalanceRef.current) {
-          liveBalanceRef.current = dbBalance;
-          setLiveBalance(dbBalance);
-        }
-        if (dbProfit > liveProfitRef.current) {
-          liveProfitRef.current = dbProfit;
-          setLiveProfit(dbProfit);
-        }
-      }
-    }, 60000);
-
-    return () => { clearInterval(interval); clearInterval(syncInterval); };
+    return () => { clearInterval(interval); };
   }, []);
 
   const handleLogout = async () => {
@@ -336,15 +294,10 @@ const Dashboard = () => {
 
   const packPrice = PACK_PRICE[storeData.store_level] || PACK_PRICE["Small shop"];
   const packActive = storeData.total_topup > 0;
-  const dailyRate = getProfitPerSecond(storeData.total_topup, storeData.store_level) * 86400;
+  const dailyRate = (PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400;
 
   return (
     <div className="min-h-screen bg-background pb-24" dir={dir}>
-
-      {/* Maintenance banner */}
-      <div className="bg-orange-500 text-white text-center text-xs py-2 font-bold sticky top-0 z-50">
-        ⚙️ الموقع في صيانة مؤقتة — أرصدتك بأمان ✅ سنعود قريباً
-      </div>
 
       {/* Impersonate banner */}
       {isImpersonating && (

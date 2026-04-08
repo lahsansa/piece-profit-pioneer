@@ -136,6 +136,7 @@ const Admin = () => {
   const [editedAmount, setEditedAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const approvingRef = useRef(new Set<string>());
+  const chatChannelRef = useRef<any>(null);
 
   // --- Balance dialog ---
   const [balanceDialogOpen, setBalanceDialogOpen] = useState(false);
@@ -246,9 +247,27 @@ const Admin = () => {
       })
       .subscribe();
 
+    // Global messages listener
+    const msgSub = supabase
+      .channel("admin-messages-global")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
+        const m = payload.new as any;
+        // Update conversations list
+        loadConversations();
+        // Ila l-chat mftuh m3a had user, zid msg
+        setChatPanelUser(prev => {
+          if (prev && prev.user_id === m.user_id) {
+            setChatPanelMessages(msgs => [...msgs, m]);
+          }
+          return prev;
+        });
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(topupSub);
       supabase.removeChannel(withdrawSub);
+      supabase.removeChannel(msgSub);
     };
   }, [adminAuth]);
 
@@ -302,18 +321,51 @@ const Admin = () => {
     const { data } = await supabase.from("messages").select("*").eq("user_id", u.user_id).order("created_at", { ascending: true });
     if (data) setChatPanelMessages(data);
     await supabase.from("messages").update({ read: true }).eq("user_id", u.user_id).eq("sender", "user").eq("read", false);
+
+    // Real-time — 7yyed l-channel l-qadim
+    if (chatChannelRef.current) supabase.removeChannel(chatChannelRef.current);
+    chatChannelRef.current = supabase.channel("admin-chat-" + u.user_id)
+      .on("postgres_changes", {
+        event: "INSERT", schema: "public", table: "messages",
+        filter: `user_id=eq.${u.user_id}`
+      }, (payload) => {
+        const m = payload.new as any;
+        setChatPanelMessages(prev => [...prev, m]);
+        // Mark as read ila jat mn user
+        if (m.sender === "user") {
+          supabase.from("messages").update({ read: true }).eq("id", m.id);
+          loadConversations();
+        }
+      })
+      .subscribe();
   };
 
   const sendChatPanel = async () => {
     if (!chatPanelInput.trim() || !chatPanelUser) return;
-    await supabase.from("messages").insert({ user_id: chatPanelUser.user_id, sender: "admin", content: chatPanelInput.trim(), read: false });
+    const content = chatPanelInput.trim();
     setChatPanelInput("");
-    await openChatPanel(chatPanelUser);
+    await supabase.from("messages").insert({ user_id: chatPanelUser.user_id, sender: "admin", content, read: false });
+    // Zid notification l user
+    await supabase.from("notifications").insert({
+      user_id: chatPanelUser.user_id,
+      message: "💬 لديك رسالة جديدة من الوكيل",
+      type: "info",
+      from_admin: true,
+      read: false,
+    });
   };
 
   const sendQuestion = async () => {
     if (!questionText.trim() || !questionUser) return;
     await supabase.from("messages").insert({ user_id: questionUser.user_id, sender: "admin", content: `❓ ${questionText.trim()}`, read: false });
+    // Zid notification l user
+    await supabase.from("notifications").insert({
+      user_id: questionUser.user_id,
+      message: "💬 لديك رسالة جديدة من الوكيل",
+      type: "info",
+      from_admin: true,
+      read: false,
+    });
     toast.success(`✅ تم إرسال السؤال لـ ${questionUser.email}`);
     setQuestionText("");
     setQuestionDialogOpen(false);
@@ -640,6 +692,34 @@ const Admin = () => {
     setDetailOpen(false);
   };
 
+  // ===================== FREEZE ALL =====================
+  const handleFreezeAll = async () => {
+    await supabase.from("user_stores").update({ is_frozen: true } as any).gt("total_topup", 0);
+    toast.success("🧊 تم تجميد جميع الحسابات");
+    await loadUsers();
+  };
+
+  const handleUnfreezeAll = async () => {
+    await supabase.from("user_stores").update({ is_frozen: false } as any).gt("total_topup", 0);
+    toast.success("✅ تم فك تجميد جميع الحسابات");
+    await loadUsers();
+  };
+
+  // ===================== FREEZE =====================
+  const handleFreezeUser = async (u: any) => {
+    await supabase.from("user_stores").update({ is_frozen: true } as any).eq("user_id", u.user_id);
+    toast.success("🧊 تم تجميد حساب " + u.email);
+    await loadUsers();
+    setDetailOpen(false);
+  };
+
+  const handleUnfreezeUser = async (u: any) => {
+    await supabase.from("user_stores").update({ is_frozen: false } as any).eq("user_id", u.user_id);
+    toast.success("✅ تم فك تجميد حساب " + u.email);
+    await loadUsers();
+    setDetailOpen(false);
+  };
+
   // ===================== DELETE =====================
   const handleDeleteUser = async () => {
     if (!userToDelete) return;
@@ -750,6 +830,8 @@ const Admin = () => {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
+            <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700 text-white" onClick={handleFreezeAll}>🧊 تجميد</Button>
+            <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleUnfreezeAll}>🔓 فك</Button>
             <Button variant="outline" size="sm" onClick={() => loadAll()} title="تحديث">🔄</Button>
             <Button variant="outline" size="sm" onClick={() => { localStorage.removeItem("adminAuth"); localStorage.removeItem("adminUser"); setAdminAuth(false); }}>خروج</Button>
           </div>
@@ -765,7 +847,7 @@ const Admin = () => {
             { key: "withdrawals", label: "طلبات السحب", count: pendingWithdrawals.length, color: "bg-orange-500" },
             { key: "users", label: `المستخدمون (${users.length})`, count: 0, color: "" },
             { key: "upgrades", label: "الترقيات", count: upgrades.length, color: "bg-purple-500" },
-            { key: "chat", label: "💬 المحادثات", count: 0, color: "" },
+            { key: "chat", label: "💬 المحادثات", count: conversations.filter(c => c.sender === "user" && !c.read).length, color: "bg-red-500" },
           ].map(tab => (
             <Button key={tab.key} variant={activeTab === tab.key ? "default" : "outline"} onClick={() => setActiveTab(tab.key)} className="relative">
               {tab.label}
@@ -1037,8 +1119,8 @@ const Admin = () => {
                     <TableHead>Email</TableHead>
                     <TableHead>المستوى</TableHead>
                     <TableHead>الحالة</TableHead>
-                    <TableHead>الرصيد</TableHead>
-                    <TableHead>الإجمالي</TableHead>
+                    <TableHead>إجمالي الربح</TableHead>
+                    <TableHead>الباقة</TableHead>
                     <TableHead>التسجيل</TableHead>
                     <TableHead>فريق</TableHead>
                     <TableHead className="pr-4">إجراءات</TableHead>
@@ -1073,8 +1155,8 @@ const Admin = () => {
                           {u.total_topup > 0 ? "🟢 Active" : "⚪ Inactive"}
                         </Badge>
                       </TableCell>
-                      <TableCell className="font-bold text-green-600">{u.balance.toFixed(2)}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{u.total_topup.toFixed(2)}</TableCell>
+                      <TableCell className="font-bold text-green-600">{u.total_profit.toFixed(2)}</TableCell>
+                      <TableCell className="text-sm text-blue-600 font-bold">{u.total_topup.toFixed(2)}</TableCell>
                       <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : "—"}</TableCell>
                       <TableCell>
                         <Badge variant="outline" className="text-xs cursor-pointer" onClick={() => openDetail(u)}>
@@ -1086,7 +1168,12 @@ const Admin = () => {
                           {/* View Details */}
                           <Button size="sm" variant="outline" className="h-7 w-7 p-0" title="عرض التفاصيل" onClick={() => openDetail(u)}><Eye className="w-3 h-3" /></Button>
                           {/* Chat */}
-                          <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-emerald-600 border-emerald-200 hover:bg-emerald-50" title="محادثة" onClick={() => openChatPanel(u)}>💬</Button>
+                          <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-emerald-600 border-emerald-200 hover:bg-emerald-50 relative" title="محادثة" onClick={() => openChatPanel(u)}>
+                            💬
+                            {conversations.find(c => c.user_id === u.user_id && c.sender === "user" && !c.read) && (
+                              <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-white" />
+                            )}
+                          </Button>
                           {/* Question */}
                           <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-orange-600 border-orange-200 hover:bg-orange-50" title="إرسال سؤال" onClick={() => { setQuestionUser(u); setQuestionDialogOpen(true); }}>❓</Button>
                           {/* Add Balance */}
@@ -1114,13 +1201,21 @@ const Admin = () => {
             {/* قائمة المحادثات */}
             <Card className="shadow-sm overflow-hidden">
               <CardHeader className="p-3 border-b">
-                <CardTitle className="text-sm">💬 المحادثات ({conversations.length})</CardTitle>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  💬 المحادثات ({conversations.length})
+                  {conversations.filter(c => c.sender === "user" && !c.read).length > 0 && (
+                    <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                      {conversations.filter(c => c.sender === "user" && !c.read).length} جديد
+                    </span>
+                  )}
+                </CardTitle>
               </CardHeader>
               <div className="overflow-y-auto h-full divide-y">
                 {conversations.length === 0 ? (
                   <p className="text-center text-muted-foreground text-sm py-8">لا توجد محادثات بعد</p>
                 ) : conversations.map(c => {
                   const userInfo = users.find(u => u.user_id === c.user_id);
+                  const unreadFromUser = c.sender === "user" && !c.read;
                   return (
                     <div
                       key={c.user_id}
@@ -1131,12 +1226,15 @@ const Admin = () => {
                       }}
                     >
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                        <div className="relative w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
                           <span className="text-xs font-bold text-emerald-600">{c.user_id.slice(0,2).toUpperCase()}</span>
+                          {unreadFromUser && (
+                            <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full border-2 border-white" />
+                          )}
                         </div>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-xs font-bold truncate">{userInfo?.email || c.user_id.slice(0,8).toUpperCase()}</p>
-                          <p className="text-xs text-muted-foreground truncate">{c.content}</p>
+                          <p className={`text-xs truncate ${unreadFromUser ? "text-red-500 font-bold" : "text-muted-foreground"}`}>{c.content}</p>
                         </div>
                       </div>
                     </div>
@@ -1166,13 +1264,16 @@ const Admin = () => {
                       </div>
                       <button
                         onClick={async () => {
-                          if (!confirm("واش تبغي تمسح كل المحادثة؟")) return;
-                          await supabase.from("messages").delete().eq("user_id", chatPanelUser.user_id);
+                          if (!confirm("واش تبغي تنهي المحادثة وتمسح كل الرسائل؟")) return;
+                          const { error } = await supabase.from("messages").delete().eq("user_id", chatPanelUser.user_id);
+                          if (error) { toast.error("حدث خطأ: " + error.message); return; }
                           setChatPanelMessages([]);
-                          toast.success("✅ تم مسح المحادثة");
+                          setChatPanelUser(null);
+                          await loadConversations();
+                          toast.success("✅ تم إنهاء المحادثة ومسح الرسائل");
                         }}
-                        className="text-red-400 hover:text-red-600 text-sm px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
-                      >🗑️</button>
+                        className="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
+                      >🔴 إنهاء المحادثة</button>
                     </div>
                   </CardHeader>
                   <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -1304,6 +1405,17 @@ const Admin = () => {
                   <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={() => { setDetailOpen(false); openBalanceDialog(detailUser, "add"); }}><ArrowUpCircle className="w-4 h-4 mr-2" /> إضافة رصيد</Button>
                   <Button className="flex-1" variant="destructive" onClick={() => { setDetailOpen(false); openBalanceDialog(detailUser, "subtract"); }}><ArrowDownCircle className="w-4 h-4 mr-2" /> خصم رصيد</Button>
                   <Button className="flex-1" variant="outline" onClick={() => handleImpersonate(detailUser)}><LogIn className="w-4 h-4 mr-2" /> دخول كـ User</Button>
+                </div>
+                <div className="flex gap-2">
+                  {(detailUser as any).is_frozen ? (
+                    <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleUnfreezeUser(detailUser)}>
+                      🔓 فك التجميد
+                    </Button>
+                  ) : (
+                    <Button className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white" onClick={() => handleFreezeUser(detailUser)}>
+                      🧊 تجميد الحساب
+                    </Button>
+                  )}
                 </div>
               </TabsContent>
 
@@ -1462,75 +1574,6 @@ const Admin = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* ===== CHAT PANEL ===== */}
-      {chatPanelOpen && chatPanelUser && (
-        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setChatPanelOpen(false)}>
-          <div className="w-full max-w-sm bg-white shadow-2xl flex flex-col h-full" onClick={e => e.stopPropagation()}>
-            {/* Header */}
-            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white p-4 flex items-center justify-between flex-shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
-                  <span className="text-sm font-bold">{chatPanelUser.user_id.slice(0,2).toUpperCase()}</span>
-                </div>
-                <div>
-                  <p className="text-sm font-bold truncate max-w-[180px]">{chatPanelUser.email}</p>
-                  <p className="text-xs text-emerald-100">{chatPanelUser.store_level}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={async () => {
-                    if (!confirm("واش تبغي تمسح كل المحادثة؟")) return;
-                    await supabase.from("messages").delete().eq("user_id", chatPanelUser.user_id);
-                    setChatPanelMessages([]);
-                    toast.success("✅ تم مسح المحادثة");
-                  }}
-                  className="text-white/70 hover:text-red-300 text-sm px-2 py-1 rounded-lg hover:bg-white/10 transition-colors"
-                  title="مسح المحادثة"
-                >
-                  🗑️
-                </button>
-                <button onClick={() => setChatPanelOpen(false)} className="text-white/70 hover:text-white text-xl">✕</button>
-              </div>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
-              {chatPanelMessages.length === 0 ? (
-                <p className="text-center text-muted-foreground text-sm py-8">لا توجد رسائل بعد</p>
-              ) : chatPanelMessages.map(m => (
-                <div key={m.id} className={`flex ${m.sender === "user" ? "justify-start" : "justify-end"}`}>
-                  <div className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm shadow-sm ${
-                    m.sender === "user"
-                      ? "bg-white text-gray-800 rounded-tl-sm"
-                      : "bg-emerald-500 text-white rounded-tr-sm"
-                  }`}>
-                    <p>{m.content}</p>
-                    <p className="text-[10px] opacity-60 mt-0.5">
-                      {new Date(m.created_at).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Input */}
-            <div className="p-3 border-t bg-white flex gap-2 flex-shrink-0">
-              <Input
-                placeholder="اكتب رسالتك..."
-                value={chatPanelInput}
-                onChange={e => setChatPanelInput(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && sendChatPanel()}
-                className="text-sm"
-              />
-              <Button className="bg-emerald-600 hover:bg-emerald-700 text-white flex-shrink-0" onClick={sendChatPanel}>
-                إرسال
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ===== QUESTION DIALOG ===== */}
       <Dialog open={questionDialogOpen} onOpenChange={setQuestionDialogOpen}>

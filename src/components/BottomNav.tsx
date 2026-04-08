@@ -1,6 +1,8 @@
 import { useLocation, Link } from "react-router-dom";
 import { Home, Newspaper, ShoppingBag, Users, ClipboardList, User, Wallet, MessageCircle } from "lucide-react";
 import { useLang } from "@/hooks/use-lang";
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 const navItems = [
   { to: "/", icon: Home, label: "Home", labelAr: "الرئيسية" },
@@ -17,6 +19,39 @@ const BottomNav = () => {
   const location = useLocation();
   const { lang } = useLang();
   const isAr = lang === "ar";
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    const loadUnread = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { count } = await supabase
+        .from("messages")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", user.id)
+        .eq("sender", "admin")
+        .eq("read", false);
+
+      setUnreadCount(count || 0);
+    };
+
+    loadUnread();
+
+    // Real-time
+    const channel = supabase.channel("bottomnav-unread")
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "messages",
+      }, () => { loadUnread(); })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  // Reset unread when on chat page
+  useEffect(() => {
+    if (location.pathname === "/chat") setUnreadCount(0);
+  }, [location.pathname]);
 
   if (location.pathname === "/admin") return null;
 
@@ -25,6 +60,7 @@ const BottomNav = () => {
       <div className="max-w-md mx-auto grid grid-cols-8 py-2">
         {navItems.map((item) => {
           const isActive = location.pathname === item.to;
+          const isChat = item.to === "/chat";
           return (
             <Link
               key={item.to}
@@ -33,7 +69,14 @@ const BottomNav = () => {
                 isActive ? "text-primary" : "text-muted-foreground hover:text-primary"
               }`}
             >
-              <item.icon className="w-5 h-5" />
+              <div className="relative">
+                <item.icon className="w-5 h-5" />
+                {isChat && unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-[9px] text-white flex items-center justify-center font-bold">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </div>
               <span className="text-[10px] font-medium">{isAr ? item.labelAr : item.label}</span>
             </Link>
           );

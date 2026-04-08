@@ -18,7 +18,7 @@ const News = () => {
   return (
     <div className="min-h-screen bg-background pt-16 pb-24 px-4" dir="rtl">
       <div className="max-w-2xl mx-auto space-y-5 py-6">
-        {/* Page Header */}
+
         <div className="flex items-center gap-3 mb-2">
           <div className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center">
             <Newspaper className="w-5 h-5 text-emerald-500" />
@@ -26,28 +26,42 @@ const News = () => {
           <h1 className="text-xl font-bold text-foreground">الأخبار والتحديثات</h1>
         </div>
 
+        {/* Withdrawal Days */}
+        <Card className="border-blue-500/30 bg-blue-500/5 overflow-hidden relative">
+          <div className="absolute top-0 left-0 right-0 h-1 bg-blue-500" />
+          <CardHeader className="pb-2 pt-5">
+            <div className="flex items-center gap-2 mb-1">
+              <Badge className="bg-blue-500/15 text-blue-600 border-blue-500/30 text-xs">مهم جداً</Badge>
+            </div>
+            <CardTitle className="text-lg text-foreground">📅 أيام السحب</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
+            <p>يمكنك سحب أرباحك في الأيام التالية فقط:</p>
+            <div className="grid grid-cols-2 gap-2">
+              {["الاثنين", "الجمعة"].map((day) => (
+                <div key={day} className="bg-blue-100 rounded-xl p-3 text-center">
+                  <p className="font-bold text-blue-700 text-sm">{day}</p>
+                </div>
+              ))}
+            </div>
+            <p className="text-blue-600 font-medium">✅ في هذه الأيام نافذة السحب مفتوحة طوال اليوم</p>
+          </CardContent>
+        </Card>
+
         {/* Main Announcement */}
         <Card className="border-emerald-500/30 bg-emerald-500/5 overflow-hidden relative">
           <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
           <CardHeader className="pb-2 pt-5">
             <div className="flex items-center gap-2 mb-1">
-              <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-xs">
-                تحديث مهم
-              </Badge>
+              <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-500/30 text-xs">تحديث مهم</Badge>
               <span className="text-xs text-muted-foreground">اليوم</span>
             </div>
             <CardTitle className="text-lg text-foreground">تحديث مهم: عودة الأرباح القوية</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground leading-relaxed">
-            <p>
-              في الأيام الأولى بعد الإطلاق حققنا أرباحًا كبيرة، وشاركنا فيها مع جميع المستثمرين.
-            </p>
-            <p>
-              الآن انتهت المرحلة الترويجية، وسنعود إلى نمط الأرباح الطبيعي والمستدام.
-            </p>
-            <p className="text-emerald-600 dark:text-emerald-400 font-medium">
-              نحن نعمل على المدى البعيد لضمان ربح مستمر وشفاف لكل مستثمر.
-            </p>
+            <p>في الأيام الأولى بعد الإطلاق حققنا أرباحًا كبيرة، وشاركنا فيها مع جميع المستثمرين.</p>
+            <p>الآن انتهت المرحلة الترويجية، وسنعود إلى نمط الأرباح الطبيعي والمستدام.</p>
+            <p className="text-emerald-600 font-medium">نحن نعمل على المدى البعيد لضمان ربح مستمر وشفاف لكل مستثمر.</p>
           </CardContent>
         </Card>
 
@@ -104,11 +118,12 @@ const News = () => {
         <Card className="text-center border-emerald-500/20">
           <CardContent className="py-6">
             <p className="text-xs text-muted-foreground mb-1">إجمالي الأرباح الموزعة حتى الآن</p>
-            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+            <div className="text-2xl font-bold text-emerald-600">
               <AnimatedCounter end={142350} prefix="$" suffix=" USD" duration={2500} />
             </div>
           </CardContent>
         </Card>
+
       </div>
     </div>
   );

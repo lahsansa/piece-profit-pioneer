@@ -88,8 +88,8 @@ const Withdraw = () => {
         .select("balance, total_topup, total_profit, store_level, is_blocked, blocked_until").eq("user_id", user.id).maybeSingle();
       if (store) {
         const dbBalance = Number(store.balance || 0);
-        const calcBalance = Number(store.total_topup || 0) + Number(store.total_profit || 0);
-        setBalance(Math.max(dbBalance, calcBalance));
+        const calcBalance = Number(store.total_profit || 0);
+        setBalance(calcBalance);
         setPackLevel(store.store_level || "Small shop");
         setTotalProfit(Number(store.total_profit || 0));
         // Check blocked
@@ -113,8 +113,8 @@ const Withdraw = () => {
   }, [navigate]);
 
   const minRequired = PACK_PRICE[packLevel] || 92;
-  // Max withdraw = profit only — capital is protected
-  const maxWithdraw = Math.max(0, totalProfit);
+  // Max withdraw = balance (total_profit)
+  const maxWithdraw = Math.max(0, balance);
 
 
 
@@ -122,7 +122,7 @@ const Withdraw = () => {
     if (isBlocked) { toast.error("🔒 حسابك محجوب — لا يمكنك السحب"); return; }
     if (!walletAddress.trim()) { toast.error("أدخل عنوان المحفظة"); return; }
     if (selectedAmount < 10) { toast.error("الحد الأدنى 10 USDT"); return; }
-    if (maxWithdraw <= 0) { toast.error(`يجب أن يبقى $${minRequired} في حسابك`); return; }
+    if (maxWithdraw <= 0) { toast.error("ليس لديك رصيد كافٍ للسحب"); return; }
     if (selectedAmount > maxWithdraw) { toast.error(`أقصى مبلغ: ${maxWithdraw.toFixed(2)} USDT`); return; }
 
 
@@ -201,9 +201,8 @@ const Withdraw = () => {
         <p className="text-xs text-white/60 mb-1 uppercase tracking-wider">Available Balance</p>
         <p className="text-4xl font-bold">{balance.toFixed(2)} <span className="text-xl font-normal text-white/70">USDT</span></p>
         <div className="mt-3 h-px bg-white/10" />
-        <div className="mt-3 flex justify-between text-xs text-white/50">
+        <div className="mt-3 flex justify-center text-xs text-white/50">
           <span>Max withdraw: <span className="text-white/80 font-bold">{maxWithdraw.toFixed(2)} USDT</span></span>
-          <span>Lock: <span className="text-white/80 font-bold">${minRequired}</span></span>
         </div>
       </div>
 
@@ -281,7 +280,7 @@ const Withdraw = () => {
               <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
                 <p className="text-red-700 font-bold text-sm">🔒 نافذة السحب مغلقة حالياً</p>
                 {nextOpen && <p className="text-red-500 text-xs mt-1">الفتح القادم المتوقع: <span className="font-bold">{nextOpen}</span></p>}
-                <p className="text-red-400 text-xs mt-1">تُفتح كل 48 ساعة لمدة ساعتين ونصف</p>
+                <p className="text-red-400 text-xs mt-1">تُفتح أيام الاثنين والجمعة طوال اليوم</p>
               </div>
             )}
             {/* Method */}
@@ -327,13 +326,13 @@ const Withdraw = () => {
 
           {selectedAmount > maxWithdraw && maxWithdraw > 0 && (
               <div className="bg-orange-50 border border-orange-100 rounded-xl p-3 text-center">
-                <p className="text-xs text-orange-600 font-bold">Max: {maxWithdraw.toFixed(2)} USDT · Must keep ${minRequired} for {packLevel}</p>
+                <p className="text-xs text-orange-600 font-bold">الحد الأقصى للسحب: {maxWithdraw.toFixed(2)} USDT</p>
               </div>
             )}
 
-            {maxWithdraw <= 0 && balance > 0 && (
+            {maxWithdraw <= 0 && balance <= 0 && (
               <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-center">
-                <p className="text-xs text-red-600 font-bold">❌ لا يمكن السحب — يجب أن يكون لديك أكثر من ${minRequired}</p>
+                <p className="text-xs text-red-600 font-bold">❌ ليس لديك رصيد كافٍ للسحب</p>
               </div>
             )}
 

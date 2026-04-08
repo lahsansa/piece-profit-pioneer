@@ -22,6 +22,21 @@ const PROFIT_PER_SECOND: Record<string, number> = {
   VIP: 180 / 86400,
 };
 
+const DAILY_PROFIT_BY_TOPUP = (totalTopup: number): number => {
+  if (totalTopup >= 2200) return 78;
+  if (totalTopup >= 1650) return 55;
+  if (totalTopup >= 1100) return 36;
+  if (totalTopup >= 750)  return 24;
+  if (totalTopup >= 350)  return 11;
+  if (totalTopup >= 99)   return 2.8;
+  if (totalTopup >= 45)   return 1.2;
+  // old pack prices
+  if (totalTopup >= 700)  return 24;
+  if (totalTopup >= 320)  return 11;
+  if (totalTopup >= 92)   return 2.8;
+  return 4.4614;
+};
+
 const PACK_PRICE: Record<string, number> = {
   "Small shop": 92,
   "Medium shop": 320,
@@ -36,6 +51,7 @@ type StoreData = {
   total_topup: number;
   total_profit: number;
   team_earnings: number;
+  today_profit: number;
 };
 
 const INITIAL_STORE: StoreData = {
@@ -44,6 +60,7 @@ const INITIAL_STORE: StoreData = {
   total_topup: 0,
   total_profit: 0,
   team_earnings: 0,
+  today_profit: 0,
 };
 
 const Dashboard = () => {
@@ -64,9 +81,12 @@ const Dashboard = () => {
   const [storeData, setStoreData] = useState<StoreData>(INITIAL_STORE);
   const [liveProfit, setLiveProfit] = useState(0);
   const [liveBalance, setLiveBalance] = useState(0);
+  const [availableBalance, setAvailableBalance] = useState(0);
+  const [todayProfit, setTodayProfit] = useState(0);
   const [isBlocked, setIsBlocked] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [popupNotif, setPopupNotif] = useState<any | null>(null);
 
   const [withdrawWindowOpen, setWithdrawWindowOpen] = useState(false);
   const [withdrawCountdown, setWithdrawCountdown] = useState("");
@@ -95,7 +115,10 @@ const Dashboard = () => {
             total_topup: Number(store.total_topup || 0),
             total_profit: Number(store.total_profit || 0),
             team_earnings: Number(store.team_earnings || 0),
+            today_profit: Number(store.today_profit || 0),
           });
+          const impTodayProfit = Number(store.today_profit || 0) || DAILY_PROFIT_BY_TOPUP(Number(store.total_topup || 0));
+          setTodayProfit(impTodayProfit);
           setLiveBalance(Number(store.balance || 0));
           setLiveProfit(Number(store.total_profit || 0));
           liveProfitRef.current = Number(store.total_profit || 0);
@@ -155,6 +178,15 @@ const Dashboard = () => {
       const dbBalance = Number(store.balance || 0);
       const dbProfit = Number(store.total_profit || 0);
 
+      // Jib total withdrawn confirmed
+      const { data: withdrawData } = await supabase
+        .from("withdrawals")
+        .select("amount")
+        .eq("user_id", user.id)
+        .eq("status", "confirmed");
+      const totalWithdrawn = (withdrawData || []).reduce((sum: number, w: any) => sum + Number(w.amount || 0), 0);
+      const availableBalance = Math.max(0, dbProfit - totalWithdrawn);
+
       // Just read from DB — cron job handles profit calculation
       setStoreData({
         store_level: store.store_level || "Small shop",
@@ -162,11 +194,15 @@ const Dashboard = () => {
         total_topup: Number(store.total_topup || 0),
         total_profit: dbProfit,
         team_earnings: Number(store.team_earnings || 0),
+        today_profit: Number(store.today_profit || 0),
       });
-      setLiveBalance(dbBalance);
+      const dbTodayProfit = Number(store.today_profit || 0) || DAILY_PROFIT_BY_TOPUP(Number(store.total_topup || 0));
+      setTodayProfit(dbTodayProfit);
+      setLiveBalance(availableBalance);
+      setAvailableBalance(availableBalance);
       setLiveProfit(dbProfit);
       liveProfitRef.current = dbProfit;
-      liveBalanceRef.current = dbBalance;
+      liveBalanceRef.current = availableBalance;
       lastTickRef.current = Date.now();
 
       // Load notifications
@@ -186,7 +222,7 @@ const Dashboard = () => {
         }, (payload) => {
           const n = payload.new as any;
           setNotifications(prev => [n, ...prev]);
-          toast(n.message, { duration: 6000 });
+          setPopupNotif(n);
         })
         .subscribe();
     };
@@ -234,27 +270,35 @@ const Dashboard = () => {
     return () => { if (timer) clearInterval(timer); };
   }, []);
 
-  // Live ticker — visual only, does NOT save to DB
-  // Cron job handles actual DB updates every minute
+  // Refresh from DB every 5 minutes — no fake ticker
   useEffect(() => {
-    const interval = setInterval(() => {
-      const level = storeDataRef.current.store_level || "Small shop";
-      const packPrice = PACK_PRICE[level] || 92;
-      const totalTopup = Number(storeDataRef.current.total_topup || 0);
-      if (totalTopup <= 0) return;
+    if (!userIdRef.current) return;
 
-      if (isBlocked) { lastTickRef.current = Date.now(); return; }
-      const now = Date.now();
-      const elapsed = Math.max(0, (now - lastTickRef.current) / 1000);
-      lastTickRef.current = now;
-      const perSecond = PROFIT_PER_SECOND[level] || PROFIT_PER_SECOND["Small shop"];
-      const delta = perSecond * elapsed;
+    const interval = setInterval(async () => {
+      if (!userIdRef.current) return;
+      const { data: store } = await supabase
+        .from("user_stores")
+        .select("total_profit")
+        .eq("user_id", userIdRef.current)
+        .maybeSingle();
 
-      liveProfitRef.current += delta;
-      liveBalanceRef.current += delta;
-      setLiveProfit(liveProfitRef.current);
-      setLiveBalance(liveBalanceRef.current);
-    }, 1000);
+      const { data: withdrawData } = await supabase
+        .from("withdrawals")
+        .select("amount")
+        .eq("user_id", userIdRef.current)
+        .eq("status", "confirmed");
+
+      if (store) {
+        const dbProfit = Number(store.total_profit || 0);
+        const totalWithdrawn = (withdrawData || []).reduce((sum: number, w: any) => sum + Number(w.amount || 0), 0);
+        const availableBalance = Math.max(0, dbProfit - totalWithdrawn);
+        setLiveProfit(dbProfit);
+        setLiveBalance(availableBalance);
+        setAvailableBalance(availableBalance);
+        liveProfitRef.current = dbProfit;
+        liveBalanceRef.current = availableBalance;
+      }
+    }, 5 * 60 * 1000);
 
     return () => { clearInterval(interval); };
   }, []);
@@ -294,7 +338,7 @@ const Dashboard = () => {
 
   const packPrice = PACK_PRICE[storeData.store_level] || PACK_PRICE["Small shop"];
   const packActive = storeData.total_topup > 0;
-  const dailyRate = (PROFIT_PER_SECOND[storeData.store_level] || 0) * 86400;
+  const dailyRate = DAILY_PROFIT_BY_TOPUP(storeData.total_topup);
 
   return (
     <div className="min-h-screen bg-background pb-24" dir={dir}>
@@ -389,15 +433,15 @@ const Dashboard = () => {
               </div>
             </div>
             <div className="bg-muted/50 rounded-xl p-4 text-center">
-              <p className="text-xs text-muted-foreground">{isAr ? "رصيد المتجر" : "My Store Credit"}</p>
-              <p className="text-3xl font-bold text-foreground tabular-nums">{liveBalance.toFixed(2)} USDT</p>
+              <p className="text-xs text-muted-foreground">{isAr ? "إجمالي ربح اليوم" : "Total Profit Today"}</p>
+              <p className="text-3xl font-bold text-green-600 tabular-nums">{todayProfit.toFixed(2)} USDT</p>
               {packActive && <p className="text-xs text-green-600 mt-1">📈 {isAr ? "الربح مباشر الآن" : "Live profit running"}</p>}
             </div>
           </CardContent>
         </Card>
 
-        {/* Notifications Card */}
-        {notifications.filter(n => !n.read).length > 0 && (
+        {/* Notifications Card — ma kaybanch msg dyal chat */}
+        {notifications.filter(n => !n.read && !n.message?.includes("لديك رسالة جديدة من الوكيل")).length > 0 && (
           <Card className="shadow-md border-0 border-l-4 border-l-blue-500">
             <CardContent className="p-4 space-y-2">
               <div className="flex items-center justify-between">
@@ -405,7 +449,7 @@ const Dashboard = () => {
                   <Bell className="w-4 h-4 text-blue-500" />
                   {isAr ? "إشعارات جديدة" : "New Notifications"}
                   <span className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                    {notifications.filter(n => !n.read).length}
+                    {notifications.filter(n => !n.read && !n.message?.includes("لديك رسالة جديدة من الوكيل")).length}
                   </span>
                 </p>
                 <Button size="sm" variant="ghost" className="text-xs h-7 text-blue-600" onClick={async () => {
@@ -416,7 +460,7 @@ const Dashboard = () => {
                 </Button>
               </div>
               <div className="space-y-3">
-                {notifications.filter(n => !n.read).map(n => (
+                {notifications.filter(n => !n.read && !n.message?.includes("لديك رسالة جديدة من الوكيل")).map(n => (
                   <div key={n.id} className={`rounded-xl p-3 text-sm ${
                     n.type === "success" ? "bg-green-50 text-green-800" :
                     n.type === "error" ? "bg-red-50 text-red-800" :
@@ -594,8 +638,7 @@ const Dashboard = () => {
         <div className="space-y-2">
           {[
             { label: isAr ? "الموقع الرسمي" : "Official Website", icon: Globe },
-            { label: isAr ? "قرض" : "Loan", icon: Landmark },
-            { label: isAr ? "تحميل" : "Download", icon: Download },
+            { label: isAr ? "تحميل التطبيق" : "Download App", icon: Download },
           ].map((link) => (
             <Card key={link.label} className="shadow-sm border-0 cursor-pointer hover:bg-muted/50 transition-colors">
               <CardContent className="p-4 flex items-center gap-3">
@@ -606,6 +649,28 @@ const Dashboard = () => {
           ))}
         </div>
       </div>
+
+      {/* Popup Notification */}
+      {popupNotif && (
+        <div className="fixed top-20 left-0 right-0 z-50 flex justify-center px-4 animate-in slide-in-from-top-2 duration-300">
+          <div className={`w-full max-w-sm rounded-2xl shadow-xl p-4 flex items-start gap-3 ${
+            popupNotif.type === "success" ? "bg-green-500" :
+            popupNotif.type === "error" ? "bg-red-500" :
+            "bg-primary"
+          } text-white`}>
+            <div className="flex-1">
+              <p className="text-sm font-bold">{popupNotif.message}</p>
+              <p className="text-xs opacity-70 mt-0.5">
+                {new Date(popupNotif.created_at).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}
+              </p>
+            </div>
+            <button
+              onClick={() => setPopupNotif(null)}
+              className="text-white/70 hover:text-white text-lg leading-none flex-shrink-0"
+            >✕</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

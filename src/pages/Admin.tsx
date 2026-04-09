@@ -36,6 +36,7 @@ interface UserRow {
   paid_referrals: number;
   created_at: string;
   last_profit_update: string;
+  is_frozen: boolean;
 }
 
 // ===================== USER REPLIES COMPONENT =====================
@@ -393,6 +394,7 @@ const Admin = () => {
         paid_referrals: referrals.filter((r: any) => Number(r.total_topup) > 0).length,
         created_at: u.created_at,
         last_profit_update: u.last_profit_update,
+        is_frozen: u.is_frozen || false,
       };
     }).sort((a, b) => {
       // paid users فوق، unpaid تحت
@@ -578,9 +580,9 @@ const Admin = () => {
   };
 
   // ===================== BALANCE =====================
-  const openBalanceDialog = (user: UserRow, action: "add" | "subtract") => {
+  const openBalanceDialog = (user: UserRow, action: "add" | "subtract" | "subtract-profit") => {
     setSelectedUser(user);
-    setBalanceAction(action);
+    setBalanceAction(action as any);
     setBalanceAmount("");
     setBalanceReason("");
     setBalanceDialogOpen(true);
@@ -589,9 +591,20 @@ const Admin = () => {
   const handleBalanceUpdate = async () => {
     if (!selectedUser || !balanceAmount || Number(balanceAmount) <= 0) { toast.error("أدخل مبلغ صحيح"); return; }
     const amount = Number(balanceAmount);
-    const newBalance = balanceAction === "add" ? selectedUser.balance + amount : Math.max(0, selectedUser.balance - amount);
-    await supabase.from("user_stores").update({ balance: newBalance }).eq("user_id", selectedUser.user_id);
-    toast.success(balanceAction === "add" ? `✅ تمت إضافة ${amount} $ ${balanceReason ? `— ${balanceReason}` : ""}` : `✅ تم خصم ${amount} $ ${balanceReason ? `— ${balanceReason}` : ""}`);
+    
+    if (balanceAction === "subtract-profit") {
+      const newProfit = Math.max(0, selectedUser.total_profit - amount);
+      const newBalance = Math.max(0, selectedUser.balance - amount);
+      await supabase.from("user_stores").update({ 
+        total_profit: newProfit,
+        balance: newBalance 
+      }).eq("user_id", selectedUser.user_id);
+      toast.success(`✅ تم خصم ${amount} $ من الربح`);
+    } else {
+      const newBalance = balanceAction === "add" ? selectedUser.balance + amount : Math.max(0, selectedUser.balance - amount);
+      await supabase.from("user_stores").update({ balance: newBalance }).eq("user_id", selectedUser.user_id);
+      toast.success(balanceAction === "add" ? `✅ تمت إضافة ${amount} $` : `✅ تم خصم ${amount} $`);
+    }
     setBalanceDialogOpen(false);
     await loadUsers();
   };
@@ -737,7 +750,6 @@ const Admin = () => {
     await supabase.from("user_stores").update({ is_frozen: true } as any).eq("user_id", u.user_id);
     toast.success("🧊 تم تجميد حساب " + u.email);
     await loadUsers();
-    setDetailOpen(false);
   };
 
   const handleUnfreezeUser = async (u: any) => {
@@ -749,7 +761,6 @@ const Admin = () => {
     } as any).eq("user_id", u.user_id);
     toast.success("✅ تم فك تجميد حساب " + u.email);
     await loadUsers();
-    setDetailOpen(false);
   };
 
   // ===================== DELETE =====================
@@ -862,8 +873,9 @@ const Admin = () => {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700 text-white" onClick={handleFreezeAll}>🧊 تجميد</Button>
-            <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleUnfreezeAll}>🔓 فك</Button>
+            <Button size="sm" className={`${users.filter(u => u.total_topup > 0).every(u => u.is_frozen) ? "bg-red-500 hover:bg-red-600" : "bg-green-500 hover:bg-green-600"} text-white`} onClick={users.filter(u => u.total_topup > 0).every(u => u.is_frozen) ? handleUnfreezeAll : handleFreezeAll}>
+              {users.filter(u => u.total_topup > 0).every(u => u.is_frozen) ? "🔴 مجمد — اضغط للفك" : "🟢 نشط — اضغط للتجميد"}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => loadAll()} title="تحديث">🔄</Button>
             <Button variant="outline" size="sm" onClick={() => { localStorage.removeItem("adminAuth"); localStorage.removeItem("adminUser"); setAdminAuth(false); }}>خروج</Button>
           </div>
@@ -1188,7 +1200,15 @@ const Admin = () => {
                         </Badge>
                       </TableCell>
                       <TableCell className="font-bold text-green-600">{u.total_profit.toFixed(2)}</TableCell>
-                      <TableCell className="text-sm text-blue-600 font-bold">{u.total_topup.toFixed(2)}</TableCell>
+                      <TableCell className="text-sm text-blue-600 font-bold">
+                        {u.total_topup >= 2200 ? "$2200" :
+                         u.total_topup >= 1650 ? "$1650" :
+                         u.total_topup >= 1100 ? "$1100" :
+                         u.total_topup >= 651  ? "$750"  :
+                         u.total_topup >= 291  ? "$350"  :
+                         u.total_topup >= 81   ? "$99"   :
+                         u.total_topup >= 45   ? "$45"   : "—"}
+                      </TableCell>
                       <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : "—"}</TableCell>
                       <TableCell>
                         <Badge variant="outline" className="text-xs cursor-pointer" onClick={() => openDetail(u)}>
@@ -1212,6 +1232,24 @@ const Admin = () => {
                           <Button size="sm" className="h-7 w-7 p-0 bg-green-600 hover:bg-green-700 text-white" title="إضافة رصيد" onClick={() => openBalanceDialog(u, "add")}><ArrowUpCircle className="w-3 h-3" /></Button>
                           {/* Subtract Balance */}
                           <Button size="sm" variant="destructive" className="h-7 w-7 p-0" title="خصم رصيد" onClick={() => openBalanceDialog(u, "subtract")}><ArrowDownCircle className="w-3 h-3" /></Button>
+                          {/* Subtract Profit */}
+                          <Button size="sm" className="h-7 w-7 p-0 bg-orange-500 hover:bg-orange-600 text-white" title="خصم من الربح فقط" onClick={() => openBalanceDialog(u, "subtract-profit" as any)}>💸</Button>
+                          {/* Reset Pack */}
+                          <Button size="sm" className="h-7 w-7 p-0 bg-gray-500 hover:bg-gray-600 text-white" title="حذف الباقة" onClick={async () => {
+                            if (!confirm(`واش تبغي تحذف باقة ${u.email}؟`)) return;
+                            await supabase.from("user_stores").update({ total_topup: 0, store_level: "Small shop" } as any).eq("user_id", u.user_id);
+                            toast.success("✅ تم حذف الباقة");
+                            await loadUsers();
+                          }}>🚫</Button>
+                          {/* Freeze Toggle */}
+                          <Button 
+                            size="sm" 
+                            className={`h-7 w-7 p-0 ${u.is_frozen ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'} text-white`}
+                            title={u.is_frozen ? "فك التجميد" : "تجميد"}
+                            onClick={() => u.is_frozen ? handleUnfreezeUser(u) : handleFreezeUser(u)}
+                          >
+                            {u.is_frozen ? "🔴" : "🟢"}
+                          </Button>
                           {/* Impersonate */}
                           <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-blue-600 border-blue-200 hover:bg-blue-50" title="دخول كـ هذا المستخدم" onClick={() => handleImpersonate(u)}><LogIn className="w-3 h-3" /></Button>
                           {/* Delete */}
@@ -1525,9 +1563,9 @@ const Admin = () => {
       <Dialog open={balanceDialogOpen} onOpenChange={setBalanceDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className={`flex items-center gap-2 ${balanceAction === "add" ? "text-green-600" : "text-red-600"}`}>
+            <DialogTitle className={`flex items-center gap-2 ${balanceAction === "add" ? "text-green-600" : balanceAction === "subtract-profit" ? "text-orange-600" : "text-red-600"}`}>
               {balanceAction === "add" ? <ArrowUpCircle className="w-5 h-5" /> : <ArrowDownCircle className="w-5 h-5" />}
-              {balanceAction === "add" ? "إضافة رصيد" : "خصم رصيد"}
+              {balanceAction === "add" ? "إضافة رصيد" : balanceAction === "subtract-profit" ? "💸 خصم من الربح فقط" : "خصم رصيد"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">

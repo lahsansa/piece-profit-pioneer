@@ -120,13 +120,8 @@ const Dashboard = () => {
             today_profit: Number(store.today_profit || 0),
           });
           const impTodayProfit = Number(store.today_profit || 0);
-          const impDailyProfit = DAILY_PROFIT_BY_TOPUP(Number(store.total_topup || 0));
-          const nowImp = new Date();
-          const midnightImp = new Date(); midnightImp.setHours(0, 0, 0, 0);
-          const impElapsed = Math.min((impDailyProfit / 86400) * ((nowImp.getTime() - midnightImp.getTime()) / 1000), impDailyProfit);
-          const finalTodayProfit = Math.max(impTodayProfit, impElapsed);
-          setTodayProfit(finalTodayProfit);
-          todayProfitRef.current = finalTodayProfit;
+          setTodayProfit(impTodayProfit);
+          todayProfitRef.current = impTodayProfit;
           lastTickTodayRef.current = Date.now();
           setLiveBalance(Number(store.balance || 0));
           setLiveProfit(Number(store.total_profit || 0));
@@ -206,19 +201,8 @@ const Dashboard = () => {
         today_profit: Number(store.today_profit || 0),
       });
       const dbTodayProfit = Number(store.today_profit || 0);
-      const dailyProfit = DAILY_PROFIT_BY_TOPUP(Number(store.total_topup || 0));
-      
-      // 7seb shhal tzad mn 00:00 l daba
-      const now = new Date();
-      const midnight = new Date();
-      midnight.setHours(0, 0, 0, 0);
-      const secondsSinceMidnight = (now.getTime() - midnight.getTime()) / 1000;
-      const elapsedProfit = Math.min((dailyProfit / 86400) * secondsSinceMidnight, dailyProfit);
-      
-      // Khud l-akbar: DB wla l-7isab
-      const initTodayProfit = Math.max(dbTodayProfit, elapsedProfit);
-      setTodayProfit(initTodayProfit);
-      todayProfitRef.current = initTodayProfit;
+      setTodayProfit(dbTodayProfit);
+      todayProfitRef.current = dbTodayProfit;
       lastTickTodayRef.current = Date.now();
       setLiveBalance(availableBalance);
       setAvailableBalance(availableBalance);

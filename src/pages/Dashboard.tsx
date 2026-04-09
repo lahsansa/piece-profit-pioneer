@@ -649,47 +649,6 @@ const Dashboard = () => {
           </Card>
         )}
 
-        {/* Withdrawal window banner */}
-        {storeData.total_topup > 0 && (
-          withdrawWindowOpen ? (
-            <Card className="shadow-md border-0 bg-green-50 border-green-200">
-              <CardContent className="p-4 text-center space-y-1">
-                <p className="text-green-700 font-bold text-sm">✅ {isAr ? "نافذة السحب مفتوحة الآن" : "Withdrawal window is open"}</p>
-                <p className="text-xs text-green-600">{isAr ? "الوقت المتبقي:" : "Time remaining:"}</p>
-                <p className="text-3xl font-bold text-green-700 tabular-nums">{withdrawCountdown}</p>
-                <Button size="sm" className="mt-2 bg-green-600 hover:bg-green-700 text-white rounded-full px-6"
-                  onClick={() => navigate("/withdraw")}>
-                  {isAr ? "اسحب الآن" : "Withdraw Now"} →
-                </Button>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card className="shadow-md border-0 bg-red-50 border-red-200">
-              <CardContent className="p-4 text-center space-y-1">
-                <p className="text-red-700 font-bold text-sm">🔒 {isAr ? "نافذة السحب مغلقة" : "Withdrawal window closed"}</p>
-                {withdrawNextOpen && (
-                  <p className="text-xs text-red-500">
-                    {isAr ? "الفتح القادم المتوقع:" : "Next opening:"} <span className="font-bold">{withdrawNextOpen}</span>
-                  </p>
-                )}
-                <p className="text-xs text-red-400">{isAr ? "تُفتح كل 48 ساعة لمدة ساعتين ونصف" : "Opens every 48h for 2.5 hours"}</p>
-              </CardContent>
-            </Card>
-          )
-        )}
-
-        <Card className="shadow-md border-0">
-          <CardContent className="p-4">
-            <div className="flex gap-2">
-              <Input type="date" value={searchDate} onChange={(e) => setSearchDate(e.target.value)} className="flex-1" />
-              <Button size="sm" className="bg-primary text-primary-foreground px-4">
-                <Search className="w-4 h-4" />
-                <span className="mx-1">{isAr ? "بحث" : "Search"}</span>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
         <div className="space-y-2">
           {[
             { label: isAr ? "الموقع الرسمي" : "Official Website", icon: Globe },

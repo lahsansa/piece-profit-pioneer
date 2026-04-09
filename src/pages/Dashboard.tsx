@@ -26,15 +26,11 @@ const DAILY_PROFIT_BY_TOPUP = (totalTopup: number): number => {
   if (totalTopup >= 2200) return 78;
   if (totalTopup >= 1650) return 55;
   if (totalTopup >= 1100) return 36;
-  if (totalTopup >= 750)  return 24;
-  if (totalTopup >= 350)  return 11;
-  if (totalTopup >= 99)   return 2.8;
+  if (totalTopup >= 651)  return 24;
+  if (totalTopup >= 291)  return 11;
+  if (totalTopup >= 81)   return 2.8;
   if (totalTopup >= 45)   return 1.2;
-  // old pack prices
-  if (totalTopup >= 700)  return 24;
-  if (totalTopup >= 320)  return 11;
-  if (totalTopup >= 92)   return 2.8;
-  return 4.4614;
+  return 0;
 };
 
 const PACK_PRICE: Record<string, number> = {
@@ -309,38 +305,7 @@ const Dashboard = () => {
     return () => { clearInterval(interval); };
   }, []);
 
-  // Today profit ticker — kaytzad chwiya b chwiya 7ta ywsel l-daily profit
-  useEffect(() => {
-    let lastDay = new Date().getDate();
-
-    const ticker = setInterval(() => {
-      const totalTopup = storeDataRef.current.total_topup || 0;
-      if (totalTopup <= 0 || isBlocked) return;
-
-      // Reset f 00:00 (nhar jdid)
-      const today = new Date().getDate();
-      if (today !== lastDay) {
-        lastDay = today;
-        todayProfitRef.current = 0;
-        lastTickTodayRef.current = Date.now();
-        setTodayProfit(0);
-        return;
-      }
-
-      const dailyProfit = DAILY_PROFIT_BY_TOPUP(totalTopup);
-      const perSecond = dailyProfit / 86400;
-
-      const nowMs = Date.now();
-      const elapsed = Math.max(0, (nowMs - lastTickTodayRef.current) / 1000);
-      lastTickTodayRef.current = nowMs;
-
-      const delta = perSecond * elapsed;
-      todayProfitRef.current = Math.min(todayProfitRef.current + delta, dailyProfit);
-      setTodayProfit(todayProfitRef.current);
-    }, 1000);
-
-    return () => { clearInterval(ticker); };
-  }, [isBlocked]);
+  // No ticker — today profit from DB only
 
   const handleLogout = async () => {
     await supabase.auth.signOut();

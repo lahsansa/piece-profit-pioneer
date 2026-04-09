@@ -96,6 +96,8 @@ const Dashboard = () => {
   const liveBalanceRef = useRef(0);
   const userIdRef = useRef("");
   const lastTickRef = useRef(Date.now());
+  const todayProfitRef = useRef(0);
+  const lastTickTodayRef = useRef(Date.now());
 
   useEffect(() => { storeDataRef.current = storeData; }, [storeData]);
 
@@ -117,8 +119,15 @@ const Dashboard = () => {
             team_earnings: Number(store.team_earnings || 0),
             today_profit: Number(store.today_profit || 0),
           });
-          const impTodayProfit = Number(store.today_profit || 0) || DAILY_PROFIT_BY_TOPUP(Number(store.total_topup || 0));
-          setTodayProfit(impTodayProfit);
+          const impTodayProfit = Number(store.today_profit || 0);
+          const impDailyProfit = DAILY_PROFIT_BY_TOPUP(Number(store.total_topup || 0));
+          const nowImp = new Date();
+          const midnightImp = new Date(); midnightImp.setHours(0, 0, 0, 0);
+          const impElapsed = Math.min((impDailyProfit / 86400) * ((nowImp.getTime() - midnightImp.getTime()) / 1000), impDailyProfit);
+          const finalTodayProfit = Math.max(impTodayProfit, impElapsed);
+          setTodayProfit(finalTodayProfit);
+          todayProfitRef.current = finalTodayProfit;
+          lastTickTodayRef.current = Date.now();
           setLiveBalance(Number(store.balance || 0));
           setLiveProfit(Number(store.total_profit || 0));
           liveProfitRef.current = Number(store.total_profit || 0);
@@ -196,8 +205,21 @@ const Dashboard = () => {
         team_earnings: Number(store.team_earnings || 0),
         today_profit: Number(store.today_profit || 0),
       });
-      const dbTodayProfit = Number(store.today_profit || 0) || DAILY_PROFIT_BY_TOPUP(Number(store.total_topup || 0));
-      setTodayProfit(dbTodayProfit);
+      const dbTodayProfit = Number(store.today_profit || 0);
+      const dailyProfit = DAILY_PROFIT_BY_TOPUP(Number(store.total_topup || 0));
+      
+      // 7seb shhal tzad mn 00:00 l daba
+      const now = new Date();
+      const midnight = new Date();
+      midnight.setHours(0, 0, 0, 0);
+      const secondsSinceMidnight = (now.getTime() - midnight.getTime()) / 1000;
+      const elapsedProfit = Math.min((dailyProfit / 86400) * secondsSinceMidnight, dailyProfit);
+      
+      // Khud l-akbar: DB wla l-7isab
+      const initTodayProfit = Math.max(dbTodayProfit, elapsedProfit);
+      setTodayProfit(initTodayProfit);
+      todayProfitRef.current = initTodayProfit;
+      lastTickTodayRef.current = Date.now();
       setLiveBalance(availableBalance);
       setAvailableBalance(availableBalance);
       setLiveProfit(dbProfit);
@@ -270,7 +292,7 @@ const Dashboard = () => {
     return () => { if (timer) clearInterval(timer); };
   }, []);
 
-  // Refresh from DB every 5 minutes — no fake ticker
+  // Refresh from DB every 5 minutes
   useEffect(() => {
     if (!userIdRef.current) return;
 
@@ -278,7 +300,7 @@ const Dashboard = () => {
       if (!userIdRef.current) return;
       const { data: store } = await supabase
         .from("user_stores")
-        .select("total_profit")
+        .select("total_profit, today_profit, total_topup")
         .eq("user_id", userIdRef.current)
         .maybeSingle();
 
@@ -302,6 +324,39 @@ const Dashboard = () => {
 
     return () => { clearInterval(interval); };
   }, []);
+
+  // Today profit ticker — kaytzad chwiya b chwiya 7ta ywsel l-daily profit
+  useEffect(() => {
+    let lastDay = new Date().getDate();
+
+    const ticker = setInterval(() => {
+      const totalTopup = storeDataRef.current.total_topup || 0;
+      if (totalTopup <= 0 || isBlocked) return;
+
+      // Reset f 00:00 (nhar jdid)
+      const today = new Date().getDate();
+      if (today !== lastDay) {
+        lastDay = today;
+        todayProfitRef.current = 0;
+        lastTickTodayRef.current = Date.now();
+        setTodayProfit(0);
+        return;
+      }
+
+      const dailyProfit = DAILY_PROFIT_BY_TOPUP(totalTopup);
+      const perSecond = dailyProfit / 86400;
+
+      const nowMs = Date.now();
+      const elapsed = Math.max(0, (nowMs - lastTickTodayRef.current) / 1000);
+      lastTickTodayRef.current = nowMs;
+
+      const delta = perSecond * elapsed;
+      todayProfitRef.current = Math.min(todayProfitRef.current + delta, dailyProfit);
+      setTodayProfit(todayProfitRef.current);
+    }, 1000);
+
+    return () => { clearInterval(ticker); };
+  }, [isBlocked]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -434,7 +489,7 @@ const Dashboard = () => {
             </div>
             <div className="bg-muted/50 rounded-xl p-4 text-center">
               <p className="text-xs text-muted-foreground">{isAr ? "إجمالي ربح اليوم" : "Total Profit Today"}</p>
-              <p className="text-3xl font-bold text-green-600 tabular-nums">{todayProfit.toFixed(2)} USDT</p>
+              <p className="text-3xl font-bold text-green-600 tabular-nums">{todayProfit.toFixed(4)} USDT</p>
               {packActive && <p className="text-xs text-green-600 mt-1">📈 {isAr ? "الربح مباشر الآن" : "Live profit running"}</p>}
             </div>
           </CardContent>

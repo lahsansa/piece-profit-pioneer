@@ -30,6 +30,11 @@ const Team = () => {
   const [copied, setCopied] = useState(false);
   const [teamEarnings, setTeamEarnings] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [calcMembers, setCalcMembers] = useState(0);
+  const [calcPack, setCalcPack] = useState(99);
+
+  const COMMISSIONS: Record<number, number> = { 45: 5, 99: 10, 350: 20, 750: 45, 1100: 75, 1650: 85, 2200: 110 };
+  const SALARIES: Record<number, number> = { 45: 1, 99: 3, 350: 11, 750: 23, 1100: 38, 1650: 49, 2200: 60 };
 
   useEffect(() => {
     loadTeamData();
@@ -153,23 +158,97 @@ const Team = () => {
           </CardContent>
         </Card>
 
-        {/* Earnings + Stats */}
+        {/* Referral Calculator */}
+        {(() => {
+          const commission = COMMISSIONS[calcPack] * calcMembers;
+          const salary = SALARIES[calcPack] * calcMembers;
+          return (
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-4 space-y-3">
+                <h3 className="text-sm font-bold text-foreground">🧮 حاسبة الأرباح</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">عدد الأعضاء</p>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="مثال: 10"
+                      className="w-full border rounded-xl px-3 py-2 text-sm text-center font-bold focus:outline-none focus:ring-2 focus:ring-primary"
+                      onChange={e => setCalcMembers(Number(e.target.value) || 0)}
+                    />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">الباقة</p>
+                    <select
+                      className="w-full border rounded-xl px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-primary bg-background"
+                      value={calcPack}
+                      onChange={e => setCalcPack(Number(e.target.value))}
+                    >
+                      <option value="45">باقة $45</option>
+                      <option value="99">باقة $99</option>
+                      <option value="350">باقة $350</option>
+                      <option value="750">باقة $750</option>
+                      <option value="1100">باقة $1100</option>
+                      <option value="1650">باقة $1650</option>
+                      <option value="2200">باقة $2200</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="bg-muted/40 rounded-xl p-3 space-y-1.5">
+                  {calcMembers === 0 ? (
+                    <p className="text-center text-xs text-muted-foreground">أدخل عدد الأعضاء لحساب أرباحك</p>
+                  ) : (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-xs text-muted-foreground">عمولة فورية</span>
+                        <span className="text-sm font-bold text-blue-600">${commission}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-xs text-muted-foreground">راتب شهري</span>
+                        <span className="text-sm font-bold text-green-600">${salary}/شهر</span>
+                      </div>
+                      <div className="flex justify-between border-t border-border/50 pt-2 mt-1">
+                        <span className="text-xs font-bold">المجموع سنة</span>
+                        <span className="text-sm font-bold text-purple-600">${commission + salary * 12}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })()}
+
+
         <Card className="border-0 shadow-sm">
-          <CardContent className="p-4 space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-muted-foreground">الراتب الشهري</span>
-              <span className="font-bold text-green-500">{teamEarnings}$</span>
+          <CardContent className="p-4 space-y-3">
+            <div className="flex justify-between items-center border-b border-border/50 pb-2">
+              <span className="text-sm font-bold text-foreground">إجمالي عمولاتي</span>
+              <span className="font-bold text-green-500 text-lg">{teamEarnings}$</span>
             </div>
-            <div className="text-xs text-muted-foreground space-y-1">
-              <p>1 عضو = <span className="text-green-500 font-bold">$5</span></p>
-              <p>5 أعضاء = <span className="text-green-500 font-bold">$50/شهر</span></p>
-              <p>10 أعضاء = <span className="text-green-500 font-bold">$100/شهر</span></p>
+            <p className="text-xs font-bold text-muted-foreground">🎁 عمولة + ربح شهري حسب باقة العضو:</p>
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-3 gap-1 text-[10px] text-muted-foreground font-bold px-2">
+                <span>الباقة</span>
+                <span className="text-center text-blue-500">عمولة فورية</span>
+                <span className="text-center text-green-500">ربح/شهر</span>
+              </div>
+              {[
+                { pack: "$45",   commission: "$5",   salary: "$1" },
+                { pack: "$99",   commission: "$10",  salary: "$3" },
+                { pack: "$350",  commission: "$20",  salary: "$11" },
+                { pack: "$750",  commission: "$45",  salary: "$23" },
+                { pack: "$1100", commission: "$75",  salary: "$38" },
+                { pack: "$1650", commission: "$85",  salary: "$49" },
+                { pack: "$2200", commission: "$110", salary: "$60" },
+              ].map((row) => (
+                <div key={row.pack} className="grid grid-cols-3 gap-1 bg-muted/40 rounded-lg px-2 py-1.5 items-center">
+                  <span className="text-xs text-muted-foreground">باقة {row.pack}</span>
+                  <span className="text-xs font-bold text-blue-500 text-center">{row.commission}</span>
+                  <span className="text-xs font-bold text-green-500 text-center">{row.salary}/شهر</span>
+                </div>
+              ))}
             </div>
-            {teamA.length < 5 && (
-              <p className="text-xs text-orange-500">
-                {5 - teamA.length} أعضاء باقين للوصول لـ $50/شهر
-              </p>
-            )}
           </CardContent>
         </Card>
 

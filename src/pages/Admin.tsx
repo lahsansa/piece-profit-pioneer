@@ -184,6 +184,7 @@ const Admin = () => {
   // --- Delete ---
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<UserRow | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
 
   // --- Search ---
   const [searchQuery, setSearchQuery] = useState("");
@@ -488,8 +489,29 @@ const Admin = () => {
         await supabase.from("user_stores").update(updateData).eq("user_id", selectedTopup.user_id);
 
         if (store.referred_by) {
-          const { data: ref } = await supabase.from("user_stores").select("balance, team_earnings").eq("referral_code", store.referred_by).single();
-          if (ref) await supabase.from("user_stores").update({ balance: Number(ref.balance) + REFERRAL_COMMISSION, team_earnings: Number(ref.team_earnings || 0) + REFERRAL_COMMISSION }).eq("referral_code", store.referred_by);
+          const commission = 
+            amount >= 2200 ? 110 :
+            amount >= 1650 ? 85 :
+            amount >= 1100 ? 75 :
+            amount >= 750  ? 45 :
+            amount >= 350  ? 20 :
+            amount >= 99   ? 10 :
+            amount >= 45   ? 5  : 0;
+
+          if (commission > 0) {
+            const { data: ref } = await supabase.from("user_stores").select("balance, team_earnings, user_id").eq("referral_code", store.referred_by).single();
+            if (ref) {
+              await supabase.from("user_stores").update({ 
+                balance: Number(ref.balance) + commission, 
+                team_earnings: Number(ref.team_earnings || 0) + commission 
+              }).eq("referral_code", store.referred_by);
+              await supabase.from("notifications").insert({
+                user_id: ref.user_id,
+                message: `🎉 حصلت على عمولة $${commission} من دعوتك — باقة $${amount}`,
+                type: "success",
+              });
+            }
+          }
         }
         toast.success(`✅ تمت الموافقة — ${amount} USDT${selectedTopup.upgrade_to ? ` + ترقية لـ ${selectedTopup.upgrade_to}` : ""}`);
         // إشعار للuser
@@ -700,7 +722,12 @@ const Admin = () => {
   };
 
   const handleUnfreezeAll = async () => {
-    await supabase.from("user_stores").update({ is_frozen: false } as any).gt("total_topup", 0);
+    await supabase.from("user_stores").update({ 
+      is_frozen: false,
+      is_blocked: false,
+      blocked_since: null,
+      blocked_until: null,
+    } as any).gt("total_topup", 0);
     toast.success("✅ تم فك تجميد جميع الحسابات");
     await loadUsers();
   };
@@ -714,7 +741,12 @@ const Admin = () => {
   };
 
   const handleUnfreezeUser = async (u: any) => {
-    await supabase.from("user_stores").update({ is_frozen: false } as any).eq("user_id", u.user_id);
+    await supabase.from("user_stores").update({ 
+      is_frozen: false,
+      is_blocked: false,
+      blocked_since: null,
+      blocked_until: null,
+    } as any).eq("user_id", u.user_id);
     toast.success("✅ تم فك تجميد حساب " + u.email);
     await loadUsers();
     setDetailOpen(false);
@@ -1630,13 +1662,37 @@ const Admin = () => {
       </Dialog>
 
       {/* ===== DELETE DIALOG ===== */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle className="text-destructive">⚠️ حذف المستخدم</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">هل أنت متأكد من حذف <strong className="text-destructive">{userToDelete?.email || userToDelete?.user_id.slice(0,8).toUpperCase()}</strong>؟ لن يتمكن من الدخول للمنصة وسيتم حذف كل بياناته.</p>
+      <Dialog open={deleteDialogOpen} onOpenChange={(o) => { setDeleteDialogOpen(o); setDeleteConfirmText(""); }}>
+        <DialogContent dir="rtl">
+          <DialogHeader><DialogTitle className="text-destructive">⚠️ حذف المستخدم نهائياً</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 space-y-1">
+              <p className="text-sm font-bold text-red-700">سيتم حذف كل بيانات هذا المستخدم:</p>
+              <p className="text-xs text-red-600">• الحساب والرصيد والأرباح</p>
+              <p className="text-xs text-red-600">• جميع الشحنات والسحوبات</p>
+              <p className="text-xs text-red-600">• المحادثات والإشعارات</p>
+              <p className="text-xs text-red-600">• لا يمكن التراجع عن هذا الإجراء</p>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              اكتب <strong className="text-destructive font-mono">CONFIRM</strong> للتأكيد على حذف{" "}
+              <strong className="text-destructive">{userToDelete?.email || userToDelete?.user_id.slice(0,8).toUpperCase()}</strong>
+            </p>
+            <Input
+              placeholder="اكتب CONFIRM"
+              value={deleteConfirmText}
+              onChange={e => setDeleteConfirmText(e.target.value)}
+              className="font-mono text-center tracking-widest border-red-300 focus:border-red-500"
+            />
+          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>إلغاء</Button>
-            <Button variant="destructive" onClick={handleDeleteUser}>حذف نهائياً 🗑️</Button>
+            <Button variant="outline" onClick={() => { setDeleteDialogOpen(false); setDeleteConfirmText(""); }}>إلغاء</Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteUser}
+              disabled={deleteConfirmText !== "CONFIRM"}
+            >
+              حذف نهائياً 🗑️
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

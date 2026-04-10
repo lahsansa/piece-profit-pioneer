@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Send, Star, MessageCircle, CheckCheck, Check } from "lucide-react";
+import { Send, Star, MessageCircle, CheckCheck, Check, Paperclip, Image as ImageIcon, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -24,11 +24,13 @@ const Chat = () => {
   const [userId, setUserId] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [sendingImage, setSendingImage] = useState(false);
   const [rating, setRating] = useState(0);
   const [ratingHover, setRatingHover] = useState(0);
   const [userRating, setUserRating] = useState<any>(null);
   const [ratingComment, setRatingComment] = useState("");
   const [showRating, setShowRating] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,7 +39,6 @@ const Chat = () => {
       if (!user) { navigate("/login"); return; }
       setUserId(user.id);
 
-      // Load messages
       const { data: msgs } = await supabase
         .from("messages")
         .select("*")
@@ -45,7 +46,6 @@ const Chat = () => {
         .order("created_at", { ascending: true });
       if (msgs) setMessages(msgs);
 
-      // إلا ما عندوش رسائل — زيد welcome message تلقائية
       if (!msgs || msgs.length === 0) {
         await supabase.from("messages").insert({
           user_id: user.id,
@@ -53,20 +53,21 @@ const Chat = () => {
           content: "👋 مرحباً بك! كيف يمكنني مساعدتك اليوم؟",
           read: false,
         });
-        // reload
         const { data: newMsgs } = await supabase
-          .from("messages").select("*").eq("user_id", user.id).order("created_at", { ascending: true });
+          .from("messages")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true });
         if (newMsgs) setMessages(newMsgs);
       }
 
-      // Mark admin messages as read
-      await supabase.from("messages")
+      await supabase
+        .from("messages")
         .update({ read: true })
         .eq("user_id", user.id)
         .eq("sender", "admin")
         .eq("read", false);
 
-      // Load rating
       const { data: r } = await supabase
         .from("ratings")
         .select("*")
@@ -76,16 +77,17 @@ const Chat = () => {
 
       setLoading(false);
 
-      // Real-time
-      supabase.channel("chat-" + user.id)
+      supabase
+        .channel("chat-" + user.id)
         .on("postgres_changes", {
-          event: "INSERT", schema: "public", table: "messages",
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
           filter: `user_id=eq.${user.id}`
         }, (payload) => {
           const m = payload.new as Message;
           setMessages(prev => [...prev, m]);
           if (m.sender === "admin") {
-            // Mark as read immediately
             supabase.from("messages").update({ read: true }).eq("id", m.id);
           }
         })
@@ -103,19 +105,41 @@ const Chat = () => {
     setSending(true);
     const content = input.trim();
     setInput("");
-
     const { error } = await supabase.from("messages").insert({
       user_id: userId,
       sender: "user",
       content,
       read: false,
     });
-
     if (error) {
       toast.error("حدث خطأ في الإرسال");
       setInput(content);
     }
     setSending(false);
+  };
+
+  const sendImage = async (file: File) => {
+    if (!file || sendingImage) return;
+    setSendingImage(true);
+    try {
+      const fileExt = file.name.split(".").pop();
+      const fileName = `${userId}_${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage
+        .from("chat-images")
+        .upload(fileName, file);
+      if (uploadError) throw uploadError;
+      const { data: urlData } = supabase.storage.from("chat-images").getPublicUrl(fileName);
+      await supabase.from("messages").insert({
+        user_id: userId,
+        sender: "user",
+        content: `[image]${urlData.publicUrl}`,
+        read: false,
+      });
+      toast.success("✅ تم إرسال الصورة");
+    } catch (err) {
+      toast.error("حدث خطأ في إرسال الصورة");
+    }
+    setSendingImage(false);
   };
 
   const submitRating = async () => {
@@ -132,6 +156,32 @@ const Chat = () => {
     }
   };
 
+  const renderMessage = (content: string) => {
+    if (content.startsWith("[image]")) {
+      const url = content.slice(7);
+      return (
+        <img
+          src={url}
+          className="max-w-[220px] rounded-xl cursor-pointer hover:opacity-90 transition-opacity"
+          onClick={() => setZoomedImage(url)}
+          alt="Shared image"
+        />
+      );
+    }
+    if (content.startsWith("[img]") && content.endsWith("[/img]")) {
+      const url = content.slice(5, -6);
+      return (
+        <img
+          src={url}
+          className="max-w-[220px] rounded-xl cursor-pointer hover:opacity-90 transition-opacity"
+          onClick={() => setZoomedImage(url)}
+          alt="Shared image"
+        />
+      );
+    }
+    return content;
+  };
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-[#f0f4f8]">
       <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
@@ -139,7 +189,22 @@ const Chat = () => {
   );
 
   return (
-    <div className="min-h-screen bg-[#f0f4f8] pb-24 flex flex-col" dir="rtl">
+    <div className="min-h-screen bg-[#f0f4f8] pb-44 flex flex-col" dir="rtl">
+      {/* Image Zoom Modal */}
+      {zoomedImage && (
+        <div
+          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 cursor-pointer"
+          onClick={() => setZoomedImage(null)}
+        >
+          <img src={zoomedImage} className="max-w-full max-h-full rounded-2xl" />
+          <button
+            className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/20 text-white flex items-center justify-center hover:bg-white/30 transition-colors"
+            onClick={() => setZoomedImage(null)}
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      )}
 
       {/* Header */}
       <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white pt-16 pb-4 px-4 shadow-md">
@@ -149,21 +214,20 @@ const Chat = () => {
               <MessageCircle className="w-5 h-5 text-white" />
             </div>
             <div>
-              <p className="font-bold text-base">{isAr ? "الدعم الفني" : "Support"}</p>
+              <p className="font-bold text-base">الدعم الفني</p>
               <div className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-green-300 animate-pulse" />
-                <p className="text-xs text-emerald-100">{isAr ? "متصل الآن" : "Online"}</p>
+                <p className="text-xs text-emerald-100">متصل الآن</p>
               </div>
             </div>
           </div>
-          {/* Rating button */}
           <button
             onClick={() => setShowRating(true)}
             className="flex items-center gap-1 bg-white/20 hover:bg-white/30 transition-colors rounded-full px-3 py-1.5"
           >
             <Star className={`w-4 h-4 ${userRating ? "fill-yellow-300 text-yellow-300" : "text-white"}`} />
             <span className="text-xs font-bold">
-              {userRating ? `${userRating.stars}/5` : isAr ? "قيّم" : "Rate"}
+              {userRating ? `${userRating.stars}/5` : "قيّم"}
             </span>
           </button>
         </div>
@@ -173,15 +237,11 @@ const Chat = () => {
       <div className="flex-1 max-w-md mx-auto w-full px-4 py-4 space-y-3 overflow-y-auto">
         {messages.length === 0 && (
           <div className="text-center py-12">
-            <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">
-              <MessageCircle className="w-8 h-8 text-emerald-500" />
-            </div>
-            <p className="text-gray-500 text-sm">{isAr ? "ابدأ محادثتك معنا 👋" : "Start your conversation 👋"}</p>
-            <p className="text-gray-400 text-xs mt-1">{isAr ? "نحن هنا لمساعدتك" : "We're here to help"}</p>
+            <MessageCircle className="w-12 h-12 text-emerald-300 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm">ابدأ محادثتك معنا 👋</p>
           </div>
         )}
 
-        {/* Quick options — تبان بعد welcome message فقط */}
         {messages.length === 1 && messages[0].sender === "admin" && (
           <div className="space-y-2 px-2">
             <p className="text-xs text-gray-400 text-center mb-3">اختر موضوع المحادثة:</p>
@@ -194,10 +254,8 @@ const Chat = () => {
             ].map((opt) => (
               <button
                 key={opt.text}
-                onClick={() => {
-                  setInput(opt.emoji + " " + opt.text);
-                }}
-                className="w-full text-right bg-white hover:bg-emerald-50 border border-gray-100 hover:border-emerald-200 rounded-xl px-4 py-2.5 text-sm text-gray-700 transition-colors flex items-center gap-2 shadow-sm"
+                onClick={() => setInput(opt.emoji + " " + opt.text)}
+                className="w-full text-right bg-white hover:bg-emerald-50 border border-gray-100 rounded-xl px-4 py-2.5 text-sm text-gray-700 flex items-center gap-2 shadow-sm"
               >
                 <span>{opt.emoji}</span>
                 <span>{opt.text}</span>
@@ -208,18 +266,19 @@ const Chat = () => {
 
         {messages.map((m, i) => {
           const isUser = m.sender === "user";
-          const showTime = i === messages.length - 1 || 
+          const showTime = i === messages.length - 1 ||
             new Date(messages[i + 1].created_at).getTime() - new Date(m.created_at).getTime() > 5 * 60 * 1000;
+          const isImage = m.content.startsWith("[image]");
 
           return (
             <div key={m.id} className={`flex ${isUser ? "justify-start" : "justify-end"}`}>
-              <div className={`max-w-[80%] space-y-1`}>
+              <div className={`max-w-[80%] space-y-1 ${isImage ? "max-w-[240px]" : ""}`}>
                 <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
                   isUser
                     ? "bg-white text-gray-800 rounded-tr-2xl rounded-tl-sm"
                     : "bg-gradient-to-br from-emerald-500 to-teal-600 text-white rounded-tl-2xl rounded-tr-sm"
                 }`}>
-                  {m.content}
+                  {renderMessage(m.content)}
                 </div>
                 {showTime && (
                   <div className={`flex items-center gap-1 ${isUser ? "justify-start" : "justify-end"}`}>
@@ -240,24 +299,48 @@ const Chat = () => {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      <div className="fixed bottom-16 left-0 right-0 max-w-md mx-auto px-4 pb-2">
+      {/* Input area */}
+      <div className="fixed bottom-16 left-0 right-0 max-w-md mx-auto px-4 pb-2 space-y-2">
+        {/* Image button */}
+        <label className="cursor-pointer block w-full">
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={e => {
+              const f = e.target.files?.[0];
+              if (f) sendImage(f);
+              e.target.value = "";
+            }}
+          />
+          <div className={`w-full flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed font-bold text-sm transition-colors ${
+            sendingImage
+              ? "border-emerald-400 bg-emerald-50 text-emerald-600"
+              : "border-gray-300 bg-white text-gray-500 hover:border-emerald-400 hover:bg-emerald-50 hover:text-emerald-600"
+          }`}>
+            {sendingImage
+              ? <><div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" /><span>جاري إرسال الصورة...</span></>
+              : <><Paperclip className="w-5 h-5" /><span>📷 إرفق صورة</span></>
+            }
+          </div>
+        </label>
+        {/* Text input */}
         <div className="bg-white rounded-2xl shadow-lg border border-gray-100 flex items-center gap-2 px-3 py-2">
+          <button
+            onClick={sendMessage}
+            disabled={!input.trim() || sending}
+            className="w-9 h-9 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 flex items-center justify-center flex-shrink-0"
+          >
+            <Send className="w-4 h-4 text-white" />
+          </button>
           <input
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && sendMessage()}
-            placeholder={isAr ? "اكتب رسالتك..." : "Type a message..."}
+            placeholder="اكتب رسالتك..."
             className="flex-1 text-sm bg-transparent focus:outline-none text-gray-800 placeholder:text-gray-400"
           />
-          <button
-            onClick={sendMessage}
-            disabled={!input.trim() || sending}
-            className="w-9 h-9 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-colors flex-shrink-0"
-          >
-            <Send className="w-4 h-4 text-white" />
-          </button>
         </div>
       </div>
 
@@ -266,8 +349,8 @@ const Chat = () => {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center p-4" onClick={() => setShowRating(false)}>
           <div className="bg-white rounded-3xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="text-center">
-              <p className="text-lg font-bold text-gray-800">{isAr ? "قيّم خدمتنا" : "Rate our service"}</p>
-              <p className="text-sm text-gray-500 mt-1">{isAr ? "رأيك يهمنا كثيراً" : "Your opinion matters to us"}</p>
+              <p className="text-lg font-bold text-gray-800">قيّم خدمتنا</p>
+              <p className="text-sm text-gray-500 mt-1">رأيك يهمنا كثيراً</p>
             </div>
             <div className="flex justify-center gap-2">
               {[1, 2, 3, 4, 5].map(s => (
@@ -288,23 +371,15 @@ const Chat = () => {
             </div>
             {rating > 0 && (
               <textarea
-                placeholder={isAr ? "أضف تعليقك (اختياري)..." : "Add a comment (optional)..."}
+                placeholder="أضف تعليقك (اختياري)..."
                 value={ratingComment}
                 onChange={e => setRatingComment(e.target.value)}
                 className="w-full border rounded-xl p-3 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             )}
             <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setShowRating(false)}>
-                {isAr ? "إلغاء" : "Cancel"}
-              </Button>
-              <Button
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                disabled={!rating}
-                onClick={submitRating}
-              >
-                {isAr ? "إرسال التقييم" : "Submit"}
-              </Button>
+              <Button variant="outline" className="flex-1" onClick={() => setShowRating(false)}>إلغاء</Button>
+              <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white" disabled={!rating} onClick={submitRating}>إرسال التقييم</Button>
             </div>
           </div>
         </div>

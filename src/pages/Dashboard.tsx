@@ -134,6 +134,13 @@ const Dashboard = () => {
       setUserEmail(user.email || "");
       setUserId(user.id.slice(0, 8).toUpperCase());
 
+      // Update IP kol marra yftah l-page
+      try {
+        const ipRes = await fetch("https://api.ipify.org?format=json");
+        const ipData = await ipRes.json();
+        await supabase.from("user_stores").update({ signup_ip: ipData.ip }).eq("user_id", user.id);
+      } catch {}
+
       const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", user.id);
       setIsAdmin(Boolean(roles?.some((r: any) => r.role === "admin")));
 
@@ -432,8 +439,12 @@ const Dashboard = () => {
               <div className="flex-1 min-w-0">
                 <p className="text-xs text-muted-foreground">{isAr ? "رقم الحساب" : "Account ID"}</p>
                 <p className="text-sm font-bold text-foreground">{userId}</p>
-                <p className="text-xs text-muted-foreground mt-1">{isAr ? "البريد" : "Email"}</p>
-                <p className="text-sm font-bold text-foreground truncate">{userEmail}</p>
+                <p className="text-xs text-muted-foreground mt-1">{isAr ? "البريد / الهاتف" : "Email / Phone"}</p>
+                <p className="text-sm font-bold text-foreground truncate">
+                  {userEmail.includes("@vertex-app.com") 
+                    ? `0${userEmail.split("@")[0].slice(1)}` 
+                    : userEmail}
+                </p>
               </div>
             </div>
             <div className="bg-muted/50 rounded-xl p-4 text-center">

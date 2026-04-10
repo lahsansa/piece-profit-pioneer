@@ -616,16 +616,15 @@ const Dashboard = () => {
       {/* Popup Notification */}
       {popupNotif && (
         <div className="fixed top-20 left-0 right-0 z-50 flex justify-center px-4 animate-in slide-in-from-top-2 duration-300">
-          <div className={`w-full max-w-sm rounded-2xl shadow-xl p-4 flex items-start gap-3 ${
-            popupNotif.type === "success" ? "bg-green-500" :
-            popupNotif.type === "error" ? "bg-red-500" :
-            "bg-primary"
-          } text-white`}>
+          <div className="w-full max-w-sm rounded-2xl shadow-2xl p-4 flex items-start gap-3 bg-red-500 text-white"
+          onClick={() => setPopupNotif(null)}
+          >
+            <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+              <Bell className="w-5 h-5 text-white" />
+            </div>
             <div className="flex-1">
+              <p className="text-xs font-bold opacity-70 mb-0.5">{isAr ? "إشعار جديد" : "New Notification"}</p>
               <p className="text-sm font-bold">{popupNotif.message}</p>
-              <p className="text-xs opacity-70 mt-0.5">
-                {new Date(popupNotif.created_at).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}
-              </p>
             </div>
             <button
               onClick={() => setPopupNotif(null)}

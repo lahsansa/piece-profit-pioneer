@@ -273,13 +273,10 @@ const Withdraw = () => {
             {windowOpen ? (
               <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
                 <p className="text-green-700 font-bold text-sm">✅ نافذة السحب مفتوحة الآن</p>
-                <p className="text-green-600 text-xs mt-1">الوقت المتبقي:</p>
-                <p className="text-3xl font-bold text-green-700 tabular-nums mt-1">{timeRemaining}</p>
               </div>
             ) : (
               <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
                 <p className="text-red-700 font-bold text-sm">🔒 نافذة السحب مغلقة حالياً</p>
-                {nextOpen && <p className="text-red-500 text-xs mt-1">الفتح القادم المتوقع: <span className="font-bold">{nextOpen}</span></p>}
                 <p className="text-red-400 text-xs mt-1">تُفتح أيام الاثنين والجمعة طوال اليوم</p>
               </div>
             )}

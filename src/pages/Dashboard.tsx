@@ -437,8 +437,8 @@ const Dashboard = () => {
               </div>
             </div>
             <div className="bg-muted/50 rounded-xl p-4 text-center">
-              <p className="text-xs text-muted-foreground">{isAr ? "إجمالي ربح اليوم" : "Total Profit Today"}</p>
-              <p className="text-3xl font-bold text-green-600 tabular-nums">{todayProfit.toFixed(4)} USDT</p>
+              <p className="text-xs text-muted-foreground">{isAr ? "إجمالي الأرباح" : "Total Profit"}</p>
+              <p className="text-3xl font-bold text-green-600 tabular-nums">{liveProfit.toFixed(2)} USDT</p>
               {packActive && <p className="text-xs text-green-600 mt-1">📈 {isAr ? "الربح مباشر الآن" : "Live profit running"}</p>}
             </div>
           </CardContent>

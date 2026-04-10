@@ -226,6 +226,24 @@ const Admin = () => {
   useEffect(() => {
     if (!adminAuth) return;
 
+    // Sound notification function
+    const playSound = () => {
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+        oscillator.frequency.setValueAtTime(660, ctx.currentTime + 0.1);
+        oscillator.frequency.setValueAtTime(880, ctx.currentTime + 0.2);
+        gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+        oscillator.start(ctx.currentTime);
+        oscillator.stop(ctx.currentTime + 0.4);
+      } catch (e) {}
+    };
+
     const topupSub = supabase
       .channel("admin-topups")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "topups" }, async (payload) => {
@@ -233,6 +251,7 @@ const Admin = () => {
         const { data: store } = await supabase.from("user_stores").select("store_level").eq("user_id", t.user_id).single();
         const currentPack = store?.store_level || "Unknown";
         const requestedPack = t.upgrade_to ? `➡️ ${t.upgrade_to}` : currentPack;
+        playSound();
         toast.info(`💰 شحن جديد — ${t.amount_usdt} USDT | ${requestedPack} | ${t.user_id.slice(0,8).toUpperCase()}`, { duration: 8000 });
         loadAll();
       })
@@ -244,6 +263,7 @@ const Admin = () => {
         const w = payload.new as any;
         const { data: store } = await supabase.from("user_stores").select("store_level").eq("user_id", w.user_id).single();
         const pack = store?.store_level || "Unknown";
+        playSound();
         toast.warning(`📤 سحب جديد — ${w.amount} USDT | ${pack} | ${w.user_id.slice(0,8).toUpperCase()}`, { duration: 8000 });
         loadAll();
       })

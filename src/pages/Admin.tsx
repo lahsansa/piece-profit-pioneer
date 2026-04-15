@@ -1745,6 +1745,20 @@ const Admin = () => {
                     {(detailUser as any).withdraw_frozen ? "🔓 فتح السحب" : "🔒 تجميد السحب فقط"}
                   </Button>
                 </div>
+
+                {/* Open withdraw for this user */}
+                <div className="flex gap-2">
+                  <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold" onClick={async () => {
+                    await supabase.from("user_stores").update({ withdraw_open: true } as any).eq("user_id", detailUser.user_id);
+                    toast.success(`✅ تم فتح السحب لـ ${detailUser.email}`);
+                    setDetailOpen(false);
+                  }}>🔓 فتح السحب لهذا المستخدم</Button>
+                  <Button className="flex-1 bg-gray-500 hover:bg-gray-600 text-white text-xs" onClick={async () => {
+                    await supabase.from("user_stores").update({ withdraw_open: false } as any).eq("user_id", detailUser.user_id);
+                    toast.success(`🔒 تم إغلاق السحب`);
+                    setDetailOpen(false);
+                  }}>🔒 إغلاق</Button>
+                </div>
               </TabsContent>
 
               {/* Topups */}

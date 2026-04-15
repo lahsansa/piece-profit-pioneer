@@ -4,6 +4,12 @@ import { useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
+const SALE_DISCOUNT = 0.30; // 30% off
+const SALE_DAYS = 3;
+const SALE_END = new Date(Date.now() + SALE_DAYS * 24 * 3600 * 1000);
+
+const getSalePrice = (price: number) => Math.round(price * (1 - SALE_DISCOUNT));
+
 const storePlans = [
   {
     id: "pack45", nameAr: "باقة $45", level: "LV1", icon: Store,
@@ -89,16 +95,25 @@ const StoreLevels = () => {
   }, []);
 
   const handleActivate = (plan: typeof storePlans[0]) => {
-    navigate(`/topup?amount=${plan.price}&plan=${encodeURIComponent(plan.nameAr)}`);
+    const salePrice = getSalePrice(plan.price);
+    navigate(`/topup?amount=${salePrice}&plan=${encodeURIComponent(plan.nameAr)}`);
   };
 
   const handleUpgrade = (plan: typeof storePlans[0]) => {
-    const diff = plan.price - currentPrice;
+    const salePrice = getSalePrice(plan.price);
+    const diff = salePrice - currentPrice;
     navigate(`/topup?amount=${diff}&plan=${encodeURIComponent(plan.nameAr)}&upgrade=true&to=${encodeURIComponent(plan.nameAr)}`);
   };
 
   return (
     <div className="min-h-screen bg-[#f0f4f8] pb-24" dir="rtl">
+      {/* Offer notification bar */}
+      <div className="fixed top-0 left-0 right-0 z-50 bg-gradient-to-r from-red-500 to-orange-500 text-white text-center py-2 px-4 flex items-center justify-center gap-2">
+        <span className="text-sm font-black animate-pulse">🔥 عرض خاص!</span>
+        <span className="text-sm font-bold">خصم 30% على جميع الباقات</span>
+        <span className="bg-white/20 text-xs font-bold px-2 py-0.5 rounded-full">3 أيام فقط</span>
+      </div>
+
       <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white pt-16 pb-5 px-4">
         <div className="max-w-md mx-auto text-center">
           <h1 className="text-xl font-bold tracking-wide">مستوى المتجر</h1>
@@ -112,6 +127,14 @@ const StoreLevels = () => {
       </div>
 
       <div className="max-w-md mx-auto px-4 pt-4">
+        {/* Sale Banner */}
+        <div className="bg-gradient-to-r from-red-500 to-orange-500 rounded-2xl p-4 shadow-lg mb-3 text-white text-center animate-pulse">
+          <p className="text-lg font-black">🔥 عرض خاص — خصم 30%</p>
+          <p className="text-sm opacity-90 mt-0.5">على جميع الباقات لمدة 3 أيام فقط!</p>
+          <div className="mt-2 bg-white/20 rounded-xl px-3 py-1 inline-block">
+            <p className="text-xs font-bold">ينتهي العرض: {SALE_END.toLocaleDateString("ar-MA", { day: "numeric", month: "long" })}</p>
+          </div>
+        </div>
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-emerald-100 mb-2">
           <p className="text-xs text-gray-600 text-center leading-relaxed">
             💡 <strong>نموذج ربحنا المزدوج:</strong> تكسب من{" "}
@@ -146,9 +169,10 @@ const StoreLevels = () => {
                     <span className="bg-white text-emerald-600 text-xs font-bold px-2 py-0.5 rounded-full">✅ باقتك</span>
                   )}
                 </div>
-                <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-1 rounded-full">
-                  {plan.level}
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className="bg-red-500 text-white text-xs font-black px-2 py-0.5 rounded-full">🔥 -30%</span>
+                  <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-1 rounded-full">{plan.level}</span>
+                </div>
               </div>
 
               <div className="p-4 space-y-3">
@@ -163,7 +187,9 @@ const StoreLevels = () => {
                   </div>
                   <div className="bg-gray-50 rounded-xl p-2.5 text-center">
                     <p className="text-[10px] text-gray-500 mb-0.5">السعر</p>
-                    <p className="text-base font-bold text-gray-800">${plan.price}</p>
+                    <p className="text-xs text-gray-400 line-through">${plan.price}</p>
+                    <p className="text-base font-bold text-red-500">${getSalePrice(plan.price)}</p>
+                    <p className="text-[10px] text-green-600 font-bold">وفر 30%</p>
                   </div>
                 </div>
 
@@ -211,14 +237,14 @@ const StoreLevels = () => {
                     className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg flex items-center justify-center gap-2"
                   >
                     <ArrowUp className="w-5 h-5" />
-                    ترقية — ادفع ${plan.price - currentPrice} فقط
+                    🔥 ترقية — ادفع ${getSalePrice(plan.price) - currentPrice} فقط
                   </button>
                 ) : (
                   <button
                     onClick={() => handleActivate(plan)}
                     className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg shadow-emerald-200"
                   >
-                    قم بالتفعيل الآن — ${plan.price} USDT 🚀
+                    🔥 فعّل الآن — ${getSalePrice(plan.price)} فقط
                   </button>
                 )}
               </div>

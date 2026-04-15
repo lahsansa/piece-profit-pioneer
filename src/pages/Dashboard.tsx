@@ -77,9 +77,11 @@ const Dashboard = () => {
   const [storeData, setStoreData] = useState<StoreData>(INITIAL_STORE);
   const [liveProfit, setLiveProfit] = useState(0);
   const [liveBalance, setLiveBalance] = useState(0);
+  const [totalWithdrawnState, setTotalWithdrawnState] = useState(0);
   const [availableBalance, setAvailableBalance] = useState(0);
   const [todayProfit, setTodayProfit] = useState(0);
   const [isBlocked, setIsBlocked] = useState(false);
+  const [isFrozen, setIsFrozen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const [popupNotif, setPopupNotif] = useState<any | null>(null);
@@ -123,6 +125,15 @@ const Dashboard = () => {
           setLiveProfit(Number(store.total_profit || 0));
           liveProfitRef.current = Number(store.total_profit || 0);
           liveBalanceRef.current = Number(store.balance || 0);
+
+          // Fetch withdrawals for impersonated user
+          const { data: impWithdrawals } = await supabase
+            .from("withdrawals")
+            .select("amount")
+            .eq("user_id", impersonateId)
+            .eq("status", "confirmed");
+          const impTotalWithdrawn = (impWithdrawals || []).reduce((s: number, w: any) => s + Number(w.amount || 0), 0);
+          setTotalWithdrawnState(impTotalWithdrawn);
         }
         return;
       }
@@ -150,12 +161,15 @@ const Dashboard = () => {
       if (store?.is_blocked) {
         const blockedUntil = store.blocked_until ? new Date(store.blocked_until) : null;
         if (!blockedUntil || blockedUntil > new Date()) {
-          // Still blocked — show message but allow topup
           setIsBlocked(true);
         } else {
-          // Temp block expired — auto unblock
           await supabase.from("user_stores").update({ is_blocked: false, blocked_since: null, blocked_until: null } as any).eq("user_id", user.id);
         }
+      }
+
+      // Check if frozen
+      if ((store as any)?.is_frozen === true) {
+        setIsFrozen(true);
       }
 
       if (!store) {
@@ -193,6 +207,7 @@ const Dashboard = () => {
         .eq("status", "confirmed");
       const totalWithdrawn = (withdrawData || []).reduce((sum: number, w: any) => sum + Number(w.amount || 0), 0);
       const availableBalance = Math.max(0, dbProfit - totalWithdrawn);
+      setTotalWithdrawnState(totalWithdrawn);
 
       // Just read from DB — cron job handles profit calculation
       setStoreData({
@@ -304,6 +319,7 @@ const Dashboard = () => {
         setLiveProfit(dbProfit);
         setLiveBalance(availableBalance);
         setAvailableBalance(availableBalance);
+        setTotalWithdrawnState(totalWithdrawn);
         liveProfitRef.current = dbProfit;
         liveBalanceRef.current = availableBalance;
       }
@@ -609,6 +625,45 @@ const Dashboard = () => {
           </Card>
         )}
 
+        {/* Progress banner — kayban shhal khrej */}
+        {!isBlocked && storeData.total_topup > 0 && totalWithdrawnState < storeData.total_topup && (
+          <Card className="shadow-md border-0 bg-orange-50 border border-orange-200">
+            <CardContent className="p-4 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-orange-600 font-bold">📊 التقدم نحو الهدف</span>
+                <span className="text-xs text-orange-700 font-bold">{((totalWithdrawnState / storeData.total_topup) * 100).toFixed(1)}%</span>
+              </div>
+              <div className="w-full bg-orange-100 rounded-full h-2.5">
+                <div
+                  className="bg-orange-500 h-2.5 rounded-full transition-all"
+                  style={{ width: `${Math.min((totalWithdrawnState / storeData.total_topup) * 100, 100)}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-orange-600">
+                <span>سحبت: <strong>${totalWithdrawnState.toFixed(2)}</strong></span>
+                <span>باقي: <strong className="text-red-500">${(storeData.total_topup - totalWithdrawnState).toFixed(2)}</strong></span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Target reached banner */}
+        {!isBlocked && storeData.total_topup > 0 && totalWithdrawnState >= storeData.total_topup && (
+          <Card className="shadow-md border-0 bg-green-50 border-2 border-green-400">
+            <CardContent className="p-4 text-center space-y-2">
+              <p className="text-2xl">🎉</p>
+              <p className="text-green-700 font-bold text-sm">وصلت لهدفك! استرددت رأس مالك كاملاً</p>
+              <p className="text-green-600 text-xs">يمكنك الآن سحب أرباحك بكل حرية</p>
+              <button
+                onClick={() => navigate("/withdraw")}
+                className="mt-1 bg-green-600 hover:bg-green-700 text-white text-sm font-bold px-6 py-2 rounded-full transition-colors"
+              >
+                💸 اسحب الآن
+              </button>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="space-y-2">
           {[
             { label: isAr ? "الموقع الرسمي" : "Official Website", icon: Globe },
@@ -623,6 +678,24 @@ const Dashboard = () => {
           ))}
         </div>
       </div>
+
+      {/* Frozen Overlay */}
+      {isFrozen && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex flex-col items-center justify-center px-6 text-center">
+          <div className="bg-white rounded-3xl p-8 max-w-sm w-full space-y-4 shadow-2xl">
+            <p className="text-5xl">🔒</p>
+            <h2 className="text-xl font-black text-gray-800">حسابك مجمد</h2>
+            <p className="text-sm text-gray-500">لا يمكنك استخدام المنصة حالياً</p>
+            <p className="text-xs text-gray-400">تواصل مع الدعم لمعرفة السبب وفك التجميد</p>
+            <button
+              onClick={() => navigate("/chat")}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-2xl transition-colors"
+            >
+              💬 تواصل مع الدعم
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Popup Notification */}
       {popupNotif && (

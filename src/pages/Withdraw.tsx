@@ -1,36 +1,82 @@
-import { useEffect, useRef, useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Send, Star, MessageCircle, CheckCheck, Check, Image } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { useLang } from "@/hooks/use-lang";
+import { ChevronLeft, XCircle } from "lucide-react";
 
-interface Message {
-  id: string;
-  user_id: string;
-  sender: "user" | "admin";
-  content: string;
-  read: boolean;
-  created_at: string;
-}
+const AMOUNTS = [10, 30, 70, 140, 300, 600, 1400, 3500, 6000, 8000, 35000, 70000];
+const FEE = 0.8;
+const METHODS = ["TRC20-USDT", "BEP20-USDT", "BEP20-USDC"];
 
-const Chat = () => {
+const PACK_PRICE: Record<string, number> = {
+  "Small shop": 92, "Medium shop": 320, "Large shop": 700, "Mega shop": 1000, "VIP": 1500,
+};
+
+const Withdraw = () => {
   const navigate = useNavigate();
-  const { lang } = useLang();
-  const isAr = lang === "ar";
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
+  const [balance, setBalance] = useState(0);
+  const [packLevel, setPackLevel] = useState("Small shop");
+  const [selectedMethod, setSelectedMethod] = useState("TRC20-USDT");
+  const [selectedAmount, setSelectedAmount] = useState(10);
+  const [walletAddress, setWalletAddress] = useState("");
+  const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
-  const [sendingImage, setSendingImage] = useState(false);
-  const [rating, setRating] = useState(0);
-  const [ratingHover, setRatingHover] = useState(0);
-  const [userRating, setUserRating] = useState<any>(null);
-  const [ratingComment, setRatingComment] = useState("");
-  const [showRating, setShowRating] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [pendingWithdrawals, setPendingWithdrawals] = useState<any[]>([]);
+  const [totalProfit, setTotalProfit] = useState(0);
+  const [historyWithdrawals, setHistoryWithdrawals] = useState<any[]>([]);
+  const [cancelling, setCancelling] = useState("");
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [activeTab, setActiveTab] = useState<"new" | "history">("new");
+  const [zoomedImg, setZoomedImg] = useState<string | null>(null);
+  const [windowOpen, setWindowOpen] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState("");
+  const [nextOpen, setNextOpen] = useState("");
+
+  useEffect(() => {
+    const checkWindow = async () => {
+      const { data: settings } = await supabase
+        .from("withdrawal_settings").select("*").eq("id", 1).single();
+      if (!settings) return;
+
+      if (settings.is_open && settings.opened_at) {
+        const openedAt = new Date(settings.opened_at);
+        const windowMs = (settings.window_minutes || 150) * 60 * 1000;
+        const closeAt = new Date(openedAt.getTime() + windowMs);
+        const now = new Date();
+
+        if (now < closeAt) {
+          setWindowOpen(true);
+          // Countdown timer
+          const updateCountdown = () => {
+            const remaining = closeAt.getTime() - Date.now();
+            if (remaining <= 0) { setWindowOpen(false); setTimeRemaining(""); return; }
+            const h = Math.floor(remaining / 3600000);
+            const m = Math.floor((remaining % 3600000) / 60000);
+            const s = Math.floor((remaining % 60000) / 1000);
+            setTimeRemaining(`${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`);
+          };
+          updateCountdown();
+          const timer = setInterval(updateCountdown, 1000);
+          return () => clearInterval(timer);
+        } else {
+          setWindowOpen(false);
+          // Calculate next open (48h from close)
+          const nextOpenAt = new Date(closeAt.getTime() + 48 * 3600000);
+          setNextOpen(nextOpenAt.toLocaleString("ar"));
+        }
+      } else {
+        setWindowOpen(false);
+        if (settings.opened_at) {
+          const openedAt = new Date(settings.opened_at);
+          const windowMs = (settings.window_minutes || 150) * 60 * 1000;
+          const closeAt = new Date(openedAt.getTime() + windowMs);
+          const nextOpenAt = new Date(closeAt.getTime() + 48 * 3600000);
+          setNextOpen(nextOpenAt.toLocaleString("ar"));
+        }
+      }
+    };
+    checkWindow();
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -38,315 +84,316 @@ const Chat = () => {
       if (!user) { navigate("/login"); return; }
       setUserId(user.id);
 
-      // Load messages
-      const { data: msgs } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: true });
-      if (msgs) setMessages(msgs);
-
-      // إلا ما عندوش رسائل — زيد welcome message تلقائية
-      if (!msgs || msgs.length === 0) {
-        await supabase.from("messages").insert({
-          user_id: user.id,
-          sender: "admin",
-          content: "👋 مرحباً بك! كيف يمكنني مساعدتك اليوم؟",
-          read: false,
-        });
-        // reload
-        const { data: newMsgs } = await supabase
-          .from("messages").select("*").eq("user_id", user.id).order("created_at", { ascending: true });
-        if (newMsgs) setMessages(newMsgs);
+      const { data: store } = await supabase.from("user_stores")
+        .select("balance, total_topup, total_profit, store_level, is_blocked, blocked_until, withdraw_open, withdraw_frozen").eq("user_id", user.id).maybeSingle();
+      if (store) {
+        const dbBalance = Number(store.balance || 0);
+        const calcBalance = Number(store.total_profit || 0);
+        setBalance(calcBalance);
+        setPackLevel(store.store_level || "Small shop");
+        setTotalProfit(Number(store.total_profit || 0));
+        // Check blocked
+        if (store.is_blocked) {
+          const blockedUntil = store.blocked_until ? new Date(store.blocked_until) : null;
+          if (!blockedUntil || blockedUntil > new Date()) setIsBlocked(true);
+        }
+        // Check if withdraw frozen
+        if ((store as any).withdraw_frozen === true) {
+          setIsBlocked(true);
+        }
+        // Check if withdraw open specifically for this user
+        if ((store as any).withdraw_open === true) {
+          setWindowOpen(true);
+        }
       }
 
-      // Mark admin messages as read
-      await supabase.from("messages")
-        .update({ read: true })
-        .eq("user_id", user.id)
-        .eq("sender", "admin")
-        .eq("read", false);
+      const { data: pending } = await supabase.from("withdrawals").select("*")
+        .eq("user_id", user.id).eq("status", "pending")
+        .order("created_at", { ascending: false });
+      if (pending) setPendingWithdrawals(pending);
 
-      // Load rating
-      const { data: r } = await supabase
-        .from("ratings")
-        .select("*")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (r) { setUserRating(r); setRating(r.stars); }
-
-      setLoading(false);
-
-      // Real-time
-      supabase.channel("chat-" + user.id)
-        .on("postgres_changes", {
-          event: "INSERT", schema: "public", table: "messages",
-          filter: `user_id=eq.${user.id}`
-        }, (payload) => {
-          const m = payload.new as Message;
-          setMessages(prev => [...prev, m]);
-          if (m.sender === "admin") {
-            // Mark as read immediately
-            supabase.from("messages").update({ read: true }).eq("id", m.id);
-          }
-        })
-        .subscribe();
+      const { data: history } = await supabase.from("withdrawals").select("*")
+        .eq("user_id", user.id).in("status", ["confirmed", "rejected", "cancelled"])
+        .order("created_at", { ascending: false }).limit(20);
+      if (history) setHistoryWithdrawals(history);
     };
     load();
   }, [navigate]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  const minRequired = PACK_PRICE[packLevel] || 92;
+  // Max withdraw = balance (total_profit)
+  const maxWithdraw = Math.max(0, balance);
 
-  const sendMessage = async () => {
-    if (!input.trim() || sending) return;
-    setSending(true);
-    const content = input.trim();
-    setInput("");
 
-    const { error } = await supabase.from("messages").insert({
-      user_id: userId,
-      sender: "user",
-      content,
-      read: false,
-    });
 
-    if (error) {
-      toast.error("حدث خطأ في الإرسال");
-      setInput(content);
-    }
-    setSending(false);
-  };
+  const handleWithdraw = async () => {
+    if (isBlocked) { toast.error("🔒 حسابك محجوب — لا يمكنك السحب"); return; }
+    if (!walletAddress.trim()) { toast.error("أدخل عنوان المحفظة"); return; }
+    if (selectedAmount < 10) { toast.error("الحد الأدنى 10 USDT"); return; }
+    if (maxWithdraw <= 0) { toast.error("ليس لديك رصيد كافٍ للسحب"); return; }
+    if (selectedAmount > maxWithdraw) { toast.error(`أقصى مبلغ: ${maxWithdraw.toFixed(2)} USDT`); return; }
 
-  const sendImage = async (file: File) => {
-    if (!file || sendingImage) return;
-    setSendingImage(true);
+
+
+    setLoading(true);
     try {
-      const fileExt = file.name.split(".").pop();
-      const fileName = `${userId}_${Date.now()}.${fileExt}`;
-      const { error: uploadError } = await supabase.storage
-        .from("chat-images").upload(fileName, file);
-      if (uploadError) throw uploadError;
-
-      const { data: urlData } = supabase.storage.from("chat-images").getPublicUrl(fileName);
-      await supabase.from("messages").insert({
-        user_id: userId,
-        sender: "user",
-        content: `[image]${urlData.publicUrl}`,
-        read: false,
+      const { error } = await supabase.from("withdrawals").insert({
+        user_id: userId, amount: selectedAmount, method: selectedMethod,
+        wallet_address: walletAddress.trim(), status: "pending",
       });
-    } catch {
-      toast.error("حدث خطأ في إرسال الصورة");
+      if (error) throw error;
+
+      await supabase.from("user_stores").update({
+        balance: balance - selectedAmount, last_profit_update: new Date().toISOString(),
+      }).eq("user_id", userId);
+
+      toast.success(`✅ تم تقديم طلب السحب — ${selectedAmount} USDT`);
+      setBalance(prev => prev - selectedAmount);
+      setWalletAddress("");
+
+      const { data: pending } = await supabase.from("withdrawals").select("*")
+        .eq("user_id", userId).eq("status", "pending")
+        .order("created_at", { ascending: false });
+      if (pending) setPendingWithdrawals(pending);
+    } catch (err: any) {
+      toast.error(err.message || "حدث خطأ");
+    } finally {
+      setLoading(false);
     }
-    setSendingImage(false);
   };
 
-  const submitRating = async () => {
-    if (!rating) return;
-    const { error } = await supabase.from("ratings").upsert({
-      user_id: userId,
-      stars: rating,
-      comment: ratingComment,
-    });
-    if (!error) {
-      setUserRating({ stars: rating, comment: ratingComment });
-      setShowRating(false);
-      toast.success("✅ شكراً على تقييمك!");
+  const handleCancel = async (w: any) => {
+    setCancelling(w.id);
+    try {
+      await supabase.from("withdrawals").update({ status: "cancelled" }).eq("id", w.id);
+      const { data: store } = await supabase.from("user_stores").select("balance").eq("user_id", userId).single();
+      if (store) {
+        await supabase.from("user_stores").update({ balance: Number(store.balance) + Number(w.amount) }).eq("user_id", userId);
+        setBalance(Number(store.balance) + Number(w.amount));
+      }
+      toast.success(`✅ تم الإلغاء — تم إرجاع ${w.amount} USDT`);
+      setPendingWithdrawals(prev => prev.filter(x => x.id !== w.id));
+      const { data: history } = await supabase.from("withdrawals").select("*")
+        .eq("user_id", userId).in("status", ["confirmed", "rejected", "cancelled"])
+        .order("created_at", { ascending: false }).limit(20);
+      if (history) setHistoryWithdrawals(history);
+    } catch (err: any) {
+      toast.error(err.message || "حدث خطأ");
+    } finally {
+      setCancelling("");
     }
   };
-
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-[#f0f4f8]">
-      <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
 
   return (
-    <div className="min-h-screen bg-[#f0f4f8] pb-24 flex flex-col" dir="rtl">
+    <div className="min-h-screen bg-gray-50" dir="ltr">
+
+      {/* Image zoom overlay */}
+      {zoomedImg && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setZoomedImg(null)}>
+          <img src={zoomedImg} className="max-w-full max-h-full rounded-2xl shadow-2xl" />
+          <p className="absolute bottom-6 text-white/60 text-xs">اضغط في أي مكان للإغلاق</p>
+        </div>
+      )}
 
       {/* Header */}
-      <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white pt-16 pb-4 px-4 shadow-md">
-        <div className="max-w-md mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-              <MessageCircle className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <p className="font-bold text-base">{isAr ? "الدعم الفني" : "Support"}</p>
-              <div className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-green-300 animate-pulse" />
-                <p className="text-xs text-emerald-100">{isAr ? "متصل الآن" : "Online"}</p>
-              </div>
-            </div>
-          </div>
-          {/* Rating button */}
-          <button
-            onClick={() => setShowRating(true)}
-            className="flex items-center gap-1 bg-white/20 hover:bg-white/30 transition-colors rounded-full px-3 py-1.5"
-          >
-            <Star className={`w-4 h-4 ${userRating ? "fill-yellow-300 text-yellow-300" : "text-white"}`} />
-            <span className="text-xs font-bold">
-              {userRating ? `${userRating.stars}/5` : isAr ? "قيّم" : "Rate"}
-            </span>
-          </button>
+      <div className="bg-white flex items-center px-4 py-4 pt-12 border-b">
+        <button onClick={() => navigate(-1)} className="mr-3">
+          <ChevronLeft className="w-6 h-6 text-gray-600" />
+        </button>
+        <h1 className="text-lg font-bold text-gray-800 flex-1 text-center">Withdraw</h1>
+        <span className="w-9" />
+      </div>
+
+      {/* Balance card */}
+      <div className="mx-4 mt-4 bg-gradient-to-br from-[#1a1a2e] to-[#16213e] rounded-2xl p-5 text-white shadow-lg">
+        <p className="text-xs text-white/60 mb-1 uppercase tracking-wider">Available Balance</p>
+        <p className="text-4xl font-bold">{balance.toFixed(2)} <span className="text-xl font-normal text-white/70">USDT</span></p>
+        <div className="mt-3 h-px bg-white/10" />
+        <div className="mt-3 flex justify-center text-xs text-white/50">
+          <span>Max withdraw: <span className="text-white/80 font-bold">{maxWithdraw.toFixed(2)} USDT</span></span>
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 max-w-md mx-auto w-full px-4 py-4 space-y-3 overflow-y-auto">
-        {messages.length === 0 && (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">
-              <MessageCircle className="w-8 h-8 text-emerald-500" />
-            </div>
-            <p className="text-gray-500 text-sm">{isAr ? "ابدأ محادثتك معنا 👋" : "Start your conversation 👋"}</p>
-            <p className="text-gray-400 text-xs mt-1">{isAr ? "نحن هنا لمساعدتك" : "We're here to help"}</p>
-          </div>
-        )}
+      {/* Processing time notice */}
+      <div className="mx-4 mt-3 bg-amber-50 border border-amber-200 rounded-2xl p-3 flex items-start gap-2">
+        <span className="text-lg">⏱️</span>
+        <p className="text-xs text-amber-700 font-medium leading-relaxed">
+          بعد إرسال طلب السحب، سيتم معالجته خلال <span className="font-bold">30 دقيقة إلى ساعتين</span> ثم يصل إلى محفظتك
+        </p>
+      </div>
 
-        {/* Quick options — تبان بعد welcome message فقط */}
-        {messages.length === 1 && messages[0].sender === "admin" && (
-          <div className="space-y-2 px-2">
-            <p className="text-xs text-gray-400 text-center mb-3">اختر موضوع المحادثة:</p>
-            {[
-              { emoji: "💰", text: "مشكل في الشحن" },
-              { emoji: "📤", text: "مشكل في السحب" },
-              { emoji: "📊", text: "استفسار عن الأرباح" },
-              { emoji: "🔐", text: "مشكل في الحساب" },
-              { emoji: "❓", text: "سؤال آخر" },
-            ].map((opt) => (
-              <button
-                key={opt.text}
-                onClick={() => {
-                  setInput(opt.emoji + " " + opt.text);
-                }}
-                className="w-full text-right bg-white hover:bg-emerald-50 border border-gray-100 hover:border-emerald-200 rounded-xl px-4 py-2.5 text-sm text-gray-700 transition-colors flex items-center gap-2 shadow-sm"
-              >
-                <span>{opt.emoji}</span>
-                <span>{opt.text}</span>
-              </button>
+      {/* Tabs */}
+      <div className="flex mx-4 mt-4 bg-white rounded-2xl p-1 shadow-sm">
+        <button onClick={() => setActiveTab("new")}
+          className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${activeTab === "new" ? "bg-blue-500 text-white shadow-sm" : "text-gray-400"}`}>
+          New Withdrawal
+        </button>
+        <button onClick={() => setActiveTab("history")}
+          className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all relative ${activeTab === "history" ? "bg-blue-500 text-white shadow-sm" : "text-gray-400"}`}>
+          History
+          {historyWithdrawals.length > 0 && activeTab !== "history" && (
+            <span className="absolute top-1.5 right-3 w-2 h-2 bg-red-500 rounded-full" />
+          )}
+        </button>
+      </div>
+
+      <div className="px-4 pb-10 mt-3 space-y-3">
+
+        {/* Pending — always visible */}
+        {pendingWithdrawals.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
+            <p className="text-xs font-bold text-amber-700 uppercase tracking-wider">⏳ Pending ({pendingWithdrawals.length})</p>
+            {pendingWithdrawals.map((w: any) => (
+              <div key={w.id} className="bg-white rounded-xl p-3 shadow-sm space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-bold text-gray-800">{w.amount} <span className="text-xs text-gray-400">USDT</span></p>
+                    <p className="text-xs text-gray-400">{w.method} · {new Date(w.created_at).toLocaleDateString()}</p>
+                    <p className="text-xs font-mono text-gray-300 truncate max-w-[180px]">{w.wallet_address}</p>
+                  </div>
+                  <button onClick={() => handleCancel(w)} disabled={cancelling === w.id}
+                    className="bg-red-500 text-white text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50 flex items-center gap-1">
+                    <XCircle className="w-3 h-3" />
+                    {cancelling === w.id ? "..." : "Cancel"}
+                  </button>
+                </div>
+                {/* Screenshot thumbnail */}
+                {w.screenshot_url && (
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={w.screenshot_url}
+                      className="w-14 h-14 object-cover rounded-xl cursor-pointer border-2 border-green-200 hover:opacity-80"
+                      onClick={() => setZoomedImg(w.screenshot_url)}
+                    />
+                    <p className="text-xs text-green-600 font-bold">✅ إثبات الإرسال — اضغط للتكبير</p>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}
 
-        {messages.map((m, i) => {
-          const isUser = m.sender === "user";
-          const showTime = i === messages.length - 1 || 
-            new Date(messages[i + 1].created_at).getTime() - new Date(m.created_at).getTime() > 5 * 60 * 1000;
+        {/* New Withdrawal Form */}
+        {activeTab === "new" && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
 
-          return (
-            <div key={m.id} className={`flex ${isUser ? "justify-start" : "justify-end"}`}>
-              <div className={`max-w-[80%] space-y-1`}>
-                <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                  isUser
-                    ? "bg-white text-gray-800 rounded-tr-2xl rounded-tl-sm"
-                    : "bg-gradient-to-br from-emerald-500 to-teal-600 text-white rounded-tl-2xl rounded-tr-sm"
-                }`}>
-                  {m.content.startsWith("[image]") ? (
-                    <img 
-                      src={m.content.replace("[image]", "")} 
-                      className="max-w-[200px] rounded-xl cursor-pointer"
-                      onClick={() => window.open(m.content.replace("[image]", ""), "_blank")}
-                    />
-                  ) : m.content}
-                </div>
-                {showTime && (
-                  <div className={`flex items-center gap-1 ${isUser ? "justify-start" : "justify-end"}`}>
-                    <p className="text-[10px] text-gray-400">
-                      {new Date(m.created_at).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}
-                    </p>
-                    {isUser && (
-                      m.read
-                        ? <CheckCheck className="w-3 h-3 text-emerald-500" />
-                        : <Check className="w-3 h-3 text-gray-400" />
-                    )}
-                  </div>
-                )}
+            {/* Blocked banner */}
+            {isBlocked && (
+              <div className="bg-red-50 border border-red-300 rounded-2xl p-4 text-center">
+                <p className="text-red-700 font-bold text-sm">🔒 حسابك محجوب</p>
+                <p className="text-red-500 text-xs mt-1">لا يمكنك السحب — تواصل مع الدعم</p>
+              </div>
+            )}
+
+          {/* Window status banner */}
+            {windowOpen ? (
+              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+                <p className="text-green-700 font-bold text-sm">✅ نافذة السحب مفتوحة الآن</p>
+              </div>
+            ) : (
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
+                <p className="text-red-700 font-bold text-sm">🔒 نافذة السحب مغلقة حالياً</p>
+                <p className="text-red-400 text-xs mt-1">تُفتح أيام الاثنين والجمعة طوال اليوم</p>
+              </div>
+            )}
+            {/* Method */}
+            <div>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Network</p>
+              <div className="flex gap-2 flex-wrap">
+                {METHODS.map(m => (
+                  <button key={m} onClick={() => setSelectedMethod(m)}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border-2 transition-all ${selectedMethod === m ? "border-blue-500 bg-blue-500 text-white" : "border-gray-100 text-gray-400 hover:border-gray-200"}`}>
+                    {m}
+                  </button>
+                ))}
               </div>
             </div>
-          );
-        })}
-        <div ref={bottomRef} />
-      </div>
 
-      <div className="fixed bottom-16 left-0 right-0 max-w-md mx-auto px-4 pb-2">
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 flex items-center gap-2 px-3 py-2">
-          {/* Image upload */}
-          <label className="cursor-pointer flex-shrink-0">
-            <input type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) sendImage(f); e.target.value = ""; }} />
-            <div className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${sendingImage ? "bg-gray-100" : "bg-gray-100 hover:bg-gray-200"}`}>
-              {sendingImage ? <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" /> : <Image className="w-4 h-4 text-gray-500" />}
+            {/* Wallet */}
+            <div>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Wallet Address</p>
+              <input type="text" placeholder={selectedMethod === "TRC20-USDT" ? "T..." : "0x..."}
+                value={walletAddress} onChange={e => setWalletAddress(e.target.value)}
+                className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors" />
             </div>
-          </label>
-          <input
-            type="text"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && sendMessage()}
-            placeholder={isAr ? "اكتب رسالتك..." : "Type a message..."}
-            className="flex-1 text-sm bg-transparent focus:outline-none text-gray-800 placeholder:text-gray-400"
-          />
-          <button
-            onClick={sendMessage}
-            disabled={!input.trim() || sending}
-            className="w-9 h-9 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-colors flex-shrink-0"
-          >
-            <Send className="w-4 h-4 text-white" />
-          </button>
-        </div>
-      </div>
 
-      {/* Rating Modal */}
-      {showRating && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center p-4" onClick={() => setShowRating(false)}>
-          <div className="bg-white rounded-3xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            <div className="text-center">
-              <p className="text-lg font-bold text-gray-800">{isAr ? "قيّم خدمتنا" : "Rate our service"}</p>
-              <p className="text-sm text-gray-500 mt-1">{isAr ? "رأيك يهمنا كثيراً" : "Your opinion matters to us"}</p>
+            {/* Amount */}
+            <div>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Amount (USDT)</p>
+              <div className="grid grid-cols-4 gap-2">
+                {AMOUNTS.map(a => (
+                  <button key={a} onClick={() => setSelectedAmount(a)}
+                    className={`py-2.5 rounded-xl text-sm font-bold transition-all ${
+                      selectedAmount === a ? "bg-blue-500 text-white shadow-md" :
+                      a > maxWithdraw ? "bg-gray-50 text-gray-200 cursor-not-allowed" :
+                      "bg-gray-50 text-gray-600 hover:bg-gray-100"}`}>
+                    {a >= 1000 ? `${a / 1000}K` : a}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-400 mt-2">Fee: {FEE} USDT · Receive: <span className="font-bold text-gray-600">{(selectedAmount - FEE).toFixed(2)} USDT</span></p>
             </div>
-            <div className="flex justify-center gap-2">
-              {[1, 2, 3, 4, 5].map(s => (
-                <button
-                  key={s}
-                  onMouseEnter={() => setRatingHover(s)}
-                  onMouseLeave={() => setRatingHover(0)}
-                  onClick={() => setRating(s)}
-                  className="transition-transform hover:scale-110"
-                >
-                  <Star className={`w-10 h-10 transition-colors ${
-                    s <= (ratingHover || rating)
-                      ? "fill-yellow-400 text-yellow-400"
-                      : "text-gray-200"
-                  }`} />
-                </button>
-              ))}
-            </div>
-            {rating > 0 && (
-              <textarea
-                placeholder={isAr ? "أضف تعليقك (اختياري)..." : "Add a comment (optional)..."}
-                value={ratingComment}
-                onChange={e => setRatingComment(e.target.value)}
-                className="w-full border rounded-xl p-3 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
+
+            {/* Warning */}
+  
+
+          {selectedAmount > maxWithdraw && maxWithdraw > 0 && (
+              <div className="bg-orange-50 border border-orange-100 rounded-xl p-3 text-center">
+                <p className="text-xs text-orange-600 font-bold">الحد الأقصى للسحب: {maxWithdraw.toFixed(2)} USDT</p>
+              </div>
             )}
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setShowRating(false)}>
-                {isAr ? "إلغاء" : "Cancel"}
-              </Button>
-              <Button
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                disabled={!rating}
-                onClick={submitRating}
-              >
-                {isAr ? "إرسال التقييم" : "Submit"}
-              </Button>
-            </div>
+
+            {maxWithdraw <= 0 && balance <= 0 && (
+              <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-center">
+                <p className="text-xs text-red-600 font-bold">❌ ليس لديك رصيد كافٍ للسحب</p>
+              </div>
+            )}
+
+            {/* Submit */}
+            <button onClick={handleWithdraw}
+              disabled={loading || selectedAmount > maxWithdraw || maxWithdraw <= 0 || !walletAddress.trim() || !windowOpen || isBlocked}
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 rounded-2xl text-base disabled:opacity-40 transition-all shadow-lg shadow-blue-100">
+              {loading ? "Processing..." : !windowOpen ? "🔒 نافذة السحب مغلقة" : `Withdraw ${selectedAmount} USDT`}
+            </button>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* History Tab */}
+        {activeTab === "history" && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+            {historyWithdrawals.length === 0 ? (
+              <p className="text-center text-gray-400 text-sm py-8">No withdrawal history yet</p>
+            ) : (
+              historyWithdrawals.map((w: any) => (
+                <div key={w.id} className="border border-gray-100 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-gray-800">{w.amount} <span className="text-xs text-gray-400">USDT</span></p>
+                      <p className="text-xs text-gray-400">{w.method} · {new Date(w.created_at).toLocaleString()}</p>
+                    </div>
+                    {w.status === "confirmed" && <span className="text-xs bg-green-100 text-green-700 font-bold px-2 py-1 rounded-lg">✅ Done</span>}
+                    {w.status === "rejected" && <span className="text-xs bg-red-100 text-red-700 font-bold px-2 py-1 rounded-lg">❌ Rejected</span>}
+                    {w.status === "cancelled" && <span className="text-xs bg-gray-100 text-gray-500 font-bold px-2 py-1 rounded-lg">↩️ Cancelled</span>}
+                  </div>
+                  {/* Thumbnail */}
+                  {w.screenshot_url && (
+                    <div className="flex items-center gap-2">
+                      <img
+                        src={w.screenshot_url}
+                        className="w-14 h-14 object-cover rounded-xl cursor-pointer border border-gray-100 hover:opacity-80 transition-opacity"
+                        onClick={() => setZoomedImg(w.screenshot_url)}
+                      />
+                      <p className="text-xs text-gray-400">إثبات الإرسال — اضغط للتكبير</p>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
 
-export default Chat;
+export default Withdraw;

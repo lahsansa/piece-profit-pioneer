@@ -741,10 +741,16 @@ const Admin = () => {
         balance: newBalance
       }).eq("user_id", selectedUser.user_id);
       toast.success(`✅ تم خصم ${amount} $ من الربح`);
+    } else if (balanceAction === "add") {
+      await supabase.from("user_stores").update({
+        balance: selectedUser.balance + amount,
+        total_profit: selectedUser.total_profit + amount,
+      }).eq("user_id", selectedUser.user_id);
+      toast.success(`✅ تمت إضافة ${amount} $`);
     } else {
-      const newBalance = balanceAction === "add" ? selectedUser.balance + amount : Math.max(0, selectedUser.balance - amount);
+      const newBalance = Math.max(0, selectedUser.balance - amount);
       await supabase.from("user_stores").update({ balance: newBalance }).eq("user_id", selectedUser.user_id);
-      toast.success(balanceAction === "add" ? `✅ تمت إضافة ${amount} $` : `✅ تم خصم ${amount} $`);
+      toast.success(`✅ تم خصم ${amount} $`);
     }
     setBalanceDialogOpen(false);
     await loadUsers();
@@ -1393,7 +1399,7 @@ const Admin = () => {
                       const q = searchQuery.toLowerCase();
                       return u.email.toLowerCase().includes(q) || u.user_id.toLowerCase().includes(q);
                     }).map(u => (
-                      <TableRow key={u.user_id} className="hover:bg-slate-50/50 cursor-pointer" onClick={() => openDetail(u)}>
+                      <TableRow key={u.user_id} className={`hover:bg-slate-50/50 cursor-pointer ${u.is_frozen ? "bg-green-50 border-l-4 border-l-green-500" : ""}`} onClick={() => openDetail(u)}>
                         <TableCell className="font-mono text-xs font-bold pl-4">{u.user_id.slice(0, 8).toUpperCase()}</TableCell>
                         <TableCell className="text-xs text-blue-600 max-w-[140px] truncate">
                           {u.email?.includes("@vertex-app.com")
@@ -1718,13 +1724,26 @@ const Admin = () => {
                 <div className="flex gap-2">
                   {(detailUser as any).is_frozen ? (
                     <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleUnfreezeUser(detailUser)}>
-                      🔓 فك التجميد
+                      🔓 فك التجميد الكامل
                     </Button>
                   ) : (
                     <Button className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white" onClick={() => handleFreezeUser(detailUser)}>
-                      🧊 تجميد الحساب
+                      🧊 تجميد كامل
                     </Button>
                   )}
+                  {/* Withdraw freeze only */}
+                  <Button 
+                    className={`flex-1 text-white text-xs ${(detailUser as any).withdraw_frozen ? "bg-green-600 hover:bg-green-700" : "bg-red-500 hover:bg-red-600"}`}
+                    onClick={async () => {
+                      const newVal = !(detailUser as any).withdraw_frozen;
+                      await supabase.from("user_stores").update({ withdraw_frozen: newVal } as any).eq("user_id", detailUser.user_id);
+                      toast.success(newVal ? "🔒 تم تجميد السحب فقط" : "🔓 تم فتح السحب");
+                      await loadUsers();
+                      setDetailOpen(false);
+                    }}
+                  >
+                    {(detailUser as any).withdraw_frozen ? "🔓 فتح السحب" : "🔒 تجميد السحب فقط"}
+                  </Button>
                 </div>
               </TabsContent>
 
